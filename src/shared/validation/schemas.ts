@@ -1694,6 +1694,9 @@ export const updateKeyPermissionsSchema = z
     isBanned: z.boolean().optional(),
     expiresAt: z.string().datetime().nullable().optional(),
     maxSessions: z.number().int().min(0).max(10000).optional(),
+    maxRequestsPerDay: z.number().int().min(0).max(10_000_000).nullable().optional(),
+    maxRequestsPerMinute: z.number().int().min(0).max(1_000_000).nullable().optional(),
+    maxRequestsPerMonth: z.number().int().min(0).max(100_000_000).nullable().optional(),
     accessSchedule: z.union([accessScheduleSchema, z.null()]).optional(),
     rateLimits: z
       .union([
@@ -1724,6 +1727,9 @@ export const updateKeyPermissionsSchema = z
       value.isBanned === undefined &&
       value.expiresAt === undefined &&
       value.maxSessions === undefined &&
+      value.maxRequestsPerDay === undefined &&
+      value.maxRequestsPerMinute === undefined &&
+      value.maxRequestsPerMonth === undefined &&
       value.accessSchedule === undefined &&
       value.rateLimits === undefined &&
       value.scopes === undefined &&

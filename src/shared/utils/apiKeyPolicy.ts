@@ -17,6 +17,7 @@ import {
 } from "@/lib/localDb";
 import { isDashboardSessionAuthenticated } from "./apiAuth";
 import { resolveComboForModel } from "@/lib/db/modelComboMappings";
+import { getDbInstance } from "@/lib/db/core";
 import { checkBudget } from "@/domain/costRules";
 import { checkTokenLimits } from "@omniroute/open-sse/services/tokenLimitCounter.ts";
 import {
@@ -246,6 +247,76 @@ async function isComboAllowedForKey(
 
   const allowed = allowedCombos.some((rule) => matchesComboAccessRule(comboName, modelStr, rule));
   return { allowed, comboName };
+}
+
+// ── Persistent monthly request caps (DB-backed) ──
+
+interface MonthlyCountCacheEntry {
+  monthKey: string; // YYYY-MM (UTC)
+  count: number;
+  lastDbSyncMs: number;
+}
+
+const _monthlyRequestCountCache = new Map<string, MonthlyCountCacheEntry>();
+const MONTHLY_COUNT_CACHE_TTL_MS = 15_000;
+
+function getUtcMonthKey(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth() + 1;
+  return `${y}-${String(m).padStart(2, "0")}`;
+}
+
+function monthWindowUtc(now: Date): { startIso: string; nextIso: string; key: string } {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
+  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+  return { startIso: start.toISOString(), nextIso: next.toISOString(), key: getUtcMonthKey(now) };
+}
+
+function countRequestsForApiKeyInMonth(apiKeyId: string, startIso: string, nextIso: string): number {
+  const db = getDbInstance();
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as cnt
+       FROM call_logs
+       WHERE api_key_id = ?
+         AND timestamp >= ?
+         AND timestamp < ?`
+    )
+    .get(apiKeyId, startIso, nextIso) as { cnt?: number } | undefined;
+  return typeof row?.cnt === "number" ? row.cnt : 0;
+}
+
+/**
+ * Check a DB-backed monthly request cap. If allowed, this also reserves 1 request in-memory
+ * to reduce race conditions before the call log is persisted.
+ */
+function checkMonthlyRequestLimit(apiKeyId: string, maxPerMonth: number | null | undefined): string | null {
+  if (!maxPerMonth || maxPerMonth <= 0) return null;
+
+  const now = new Date();
+  const { startIso, nextIso, key: monthKey } = monthWindowUtc(now);
+  const cached = _monthlyRequestCountCache.get(apiKeyId);
+  const nowMs = Date.now();
+
+  let count: number;
+  if (!cached || cached.monthKey !== monthKey || nowMs - cached.lastDbSyncMs > MONTHLY_COUNT_CACHE_TTL_MS) {
+    count = countRequestsForApiKeyInMonth(apiKeyId, startIso, nextIso);
+    _monthlyRequestCountCache.set(apiKeyId, { monthKey, count, lastDbSyncMs: nowMs });
+  } else {
+    count = cached.count;
+  }
+
+  if (count >= maxPerMonth) {
+    return `Monthly request limit exceeded (${maxPerMonth} requests/month). Try again next month.`;
+  }
+
+  // Reserve one request immediately (best-effort).
+  const entry = _monthlyRequestCountCache.get(apiKeyId);
+  if (entry && entry.monthKey === monthKey) {
+    entry.count += 1;
+  }
+
+  return null;
 }
 
 export interface ApiKeyPolicyResult {

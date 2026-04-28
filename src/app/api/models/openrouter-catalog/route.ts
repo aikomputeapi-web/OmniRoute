@@ -34,15 +34,26 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  const freeOnly =
+    req.nextUrl.searchParams.get("free") === "true" ||
+    process.env.OPENROUTER_FREE_ONLY === "true";
+
   const result = await getOpenRouterCatalog();
+  const data = freeOnly
+    ? result.data.filter(
+        (m) => m.id.endsWith(":free") || (m.pricing?.prompt === "0" && m.pricing?.completion === "0")
+      )
+    : result.data;
+
   return NextResponse.json({
     object: "list",
-    data: result.data,
+    data,
     meta: {
       source: result.fromCache ? (result.stale ? "stale-cache" : "cache") : "fresh",
       cachedAt: result.cachedAt ?? undefined,
       stale: result.stale,
-      count: result.data.length,
+      count: data.length,
+      freeOnly,
     },
   });
 }

@@ -331,6 +331,14 @@ export const OAUTH_PROVIDERS = {
       "Requires the Devin CLI binary. Run `devin auth login` to authenticate, or provide your WINDSURF_API_KEY. Install: https://cli.devin.ai",
     website: "https://cli.devin.ai",
   },
+  augment: {
+    id: "augment",
+    alias: "aug",
+    name: "Augment Code",
+    icon: "code",
+    color: "#6E3FF3",
+    textIcon: "AU",
+  },
 };
 
 // Web / Cookie Providers

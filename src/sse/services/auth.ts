@@ -56,6 +56,8 @@ import {
 import { isModelExcludedByConnection } from "@/domain/connectionModelRules";
 import * as log from "../utils/logger";
 import { fisherYatesShuffle, getNextFromDeckSync } from "@/shared/utils/shuffleDeck";
+import { isAccountInCooldown } from "@/lib/sessionPersistence";
+import { applyFingerprint, getProxyAgent } from "@/lib/antiDetect";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -1124,6 +1126,11 @@ export async function getProviderCredentials(
         if (provider === "codex" && isCodexScopeUnavailable(c, requestedModel)) return false;
         // Per-model lockout: if this specific model is locked on this connection, skip it
         if (requestedModel && isModelLocked(provider, c.id, requestedModel)) return false;
+        // Account pooling: check Redis cooldown status
+        if (isAccountInCooldown(c.id)) {
+          log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | in cooldown (pooling system)`);
+          return false;
+        }
       }
       return true;
     });

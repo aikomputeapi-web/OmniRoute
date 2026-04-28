@@ -416,6 +416,22 @@ export const WINDSURF_CONFIG = {
   extensionVersion: "3.14.0",
 };
 
+// Augment Code OAuth Configuration (Authorization Code Flow with PKCE via Auth0)
+// After OAuth, the access_token is used directly as a Bearer token against
+// the Augment shard API (d0-d20.api.augmentcode.com / i0-i5.api.augmentcode.com).
+export const AUGMENT_CONFIG = {
+  clientId: process.env.AUGMENT_OAUTH_CLIENT_ID || "7TvCGDkBuBpRSPSBnFMGbr3RFBbFBqBr",
+  authorizeUrl: "https://auth.augmentcode.com/authorize",
+  tokenUrl: "https://auth.augmentcode.com/oauth/token",
+  userInfoUrl: "https://auth.augmentcode.com/userinfo",
+  scope: "openid profile email offline_access",
+  audience: "https://augment.us.auth0.com/api/v2/",
+  codeChallengeMethod: "S256",
+  // User-Agent matching the official VS Code extension
+  userAgent: process.env.AUGMENT_USER_AGENT || "Augment.vscode-augment/0.492.0 (darwin; arm64; 24.2.0) vscode/1.98.2",
+  apiVersion: "2",
+};
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -440,4 +456,5 @@ export const PROVIDERS = {
   WINDSURF: "windsurf",
   DEVIN_CLI: "devin-cli",
   TRAE: "trae",
+  AUGMENT: "augment",
 };

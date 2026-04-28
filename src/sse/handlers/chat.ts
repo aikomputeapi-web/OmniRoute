@@ -68,6 +68,9 @@ import { generateRequestId } from "../../shared/utils/requestId";
 import { logAuditEvent } from "../../lib/compliance/index";
 import { enforceApiKeyPolicy } from "../../shared/utils/apiKeyPolicy";
 import { cloneLogPayload } from "@/lib/logPayloads";
+import { handlePooledResponse } from "@/lib/pooledRouting";
+import { updateSessionHistory } from "@/lib/sessionPersistence";
+import { trackTokenUsage, trackRequestUsage } from "@/lib/accountPool";
 import {
   applyTaskAwareRouting,
   getTaskRoutingConfig,

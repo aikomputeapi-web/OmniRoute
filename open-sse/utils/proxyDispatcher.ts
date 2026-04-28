@@ -1,4 +1,5 @@
 import "./setupPolyfill.ts";
+import { readFileSync } from "node:fs";
 import { Agent, ProxyAgent, type Dispatcher } from "undici";
 import { socksDispatcher } from "fetch-socks";
 import { getUpstreamTimeoutConfig } from "@/shared/utils/runtimeTimeouts";
@@ -7,12 +8,14 @@ import { createSocksDispatcherWithFamily } from "./socksConnectorWithFamily.ts";
 
 const DISPATCHER_CACHE_KEY = Symbol.for("omniroute.proxyDispatcher.cache");
 const DEFAULT_DISPATCHER_KEY = Symbol.for("omniroute.proxyDispatcher.default");
+const TLS_CA_CACHE_KEY = Symbol.for("omniroute.proxyDispatcher.tlsCa");
 const SUPPORTED_PROTOCOLS = new Set(["http:", "https:", "socks5:"]);
 
 type DispatcherCache = Map<string, Dispatcher>;
 type GlobalWithDispatcherCache = typeof globalThis & {
   [DISPATCHER_CACHE_KEY]?: DispatcherCache;
   [DEFAULT_DISPATCHER_KEY]?: Dispatcher;
+  [TLS_CA_CACHE_KEY]?: string | null;
 };
 type SocksDispatcherOptions = {
   type: number;
@@ -48,6 +51,41 @@ export function clearDispatcherCache() {
 
   const globalWithCache = globalThis as GlobalWithDispatcherCache;
   delete globalWithCache[DEFAULT_DISPATCHER_KEY];
+  delete globalWithCache[TLS_CA_CACHE_KEY];
+}
+
+function resolveCustomTlsCa(): string | undefined {
+  const globalWithCache = globalThis as GlobalWithDispatcherCache;
+  if (globalWithCache[TLS_CA_CACHE_KEY] !== undefined) {
+    return globalWithCache[TLS_CA_CACHE_KEY] || undefined;
+  }
+
+  const certPath =
+    process.env.OMNIROUTE_CA_CERT_PATH ||
+    process.env.OUTBOUND_CA_CERT_PATH ||
+    process.env.NODE_EXTRA_CA_CERTS;
+
+  if (!certPath) {
+    globalWithCache[TLS_CA_CACHE_KEY] = null;
+    return undefined;
+  }
+
+  try {
+    const certPem = readFileSync(certPath, "utf8");
+    if (!certPem.trim()) {
+      throw new Error("certificate file is empty");
+    }
+    globalWithCache[TLS_CA_CACHE_KEY] = certPem;
+    console.log(`[ProxyDispatcher] Loaded custom CA certificate from ${certPath}`);
+    return certPem;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[ProxyDispatcher] Failed to load custom CA certificate from ${certPath}: ${message}`
+    );
+    globalWithCache[TLS_CA_CACHE_KEY] = null;
+    return undefined;
+  }
 }
 
 function getDispatcherOptions() {
@@ -84,7 +122,11 @@ function getProxyDispatcherOptions() {
 export function getDefaultDispatcher(): Dispatcher {
   const globalWithCache = globalThis as GlobalWithDispatcherCache;
   if (!globalWithCache[DEFAULT_DISPATCHER_KEY]) {
-    globalWithCache[DEFAULT_DISPATCHER_KEY] = new Agent(getDispatcherOptions());
+    const customCa = resolveCustomTlsCa();
+    globalWithCache[DEFAULT_DISPATCHER_KEY] = new Agent({
+      ...getDispatcherOptions(),
+      ...(customCa ? { connect: { ca: customCa } } : {}),
+    });
   }
   return globalWithCache[DEFAULT_DISPATCHER_KEY];
 }
@@ -306,6 +348,11 @@ export function createProxyDispatcher(proxyUrl: string): Dispatcher {
   const normalizedUrl = normalizeProxyUrl(proxyUrl, "proxy dispatcher");
   const dispatcherCache = getDispatcherCache();
   const proxyDispatcherOptions = getProxyDispatcherOptions();
+  const customCa = resolveCustomTlsCa();
+  const proxyDispatcherOptionsWithCa = {
+    ...proxyDispatcherOptions,
+    ...(customCa ? { connect: { ca: customCa } } : {}),
+  };
 
   let dispatcher = dispatcherCache.get(normalizedUrl);
   if (dispatcher) return dispatcher;
@@ -325,16 +372,18 @@ export function createProxyDispatcher(proxyUrl: string): Dispatcher {
     };
     if (parsed.username) socksOptions.userId = decodeURIComponent(parsed.username);
     if (parsed.password) socksOptions.password = decodeURIComponent(parsed.password);
+    // Custom outbound CA bundle (e.g. Bright Data SSL cert) threaded into the
+    // SOCKS connect options when present. Preserved from the custom v3.7.4 feature.
     dispatcher =
       family === null
         ? (socksDispatcher(
             socksOptions as Parameters<typeof socksDispatcher>[0],
-            proxyDispatcherOptions
+            proxyDispatcherOptionsWithCa
           ) as Dispatcher)
         : createSocksDispatcherWithFamily(
             socksOptions as unknown as Parameters<typeof createSocksDispatcherWithFamily>[0],
             family,
-            proxyDispatcherOptions
+            proxyDispatcherOptionsWithCa
           );
   } else {
     // ProxyAgent omits `connect`; the client->proxy socket is built from `proxyTls`.
@@ -349,6 +398,9 @@ export function createProxyDispatcher(proxyUrl: string): Dispatcher {
       ...(family !== null
         ? { proxyTls: { family, autoSelectFamily: false } as ProxyAgent.Options["proxyTls"] }
         : {}),
+      // Custom outbound CA bundle (e.g. Bright Data SSL cert) for the
+      // proxy->upstream TLS hop. Preserved from the custom v3.7.4 feature.
+      ...(customCa ? { requestTls: { ca: customCa } } : {}),
     });
   }
 

@@ -325,6 +325,7 @@ const SCHEMA_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_cl_timestamp ON call_logs(timestamp);
   CREATE INDEX IF NOT EXISTS idx_cl_status ON call_logs(status);
+  CREATE INDEX IF NOT EXISTS idx_cl_api_key_ts ON call_logs(api_key_id, timestamp);
 
   CREATE TABLE IF NOT EXISTS proxy_logs (
     id TEXT PRIMARY KEY,

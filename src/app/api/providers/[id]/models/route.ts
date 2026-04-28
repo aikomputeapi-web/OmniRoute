@@ -599,7 +599,18 @@ const PROVIDER_MODELS_CONFIG: Record<string, ProviderModelsConfigEntry> = {
     headers: { "Content-Type": "application/json" },
     authHeader: "Authorization",
     authPrefix: "Bearer ",
-    parseResponse: (data) => data.data || data.models || [],
+    parseResponse: (data) => {
+      const models = data.data || data.models || [];
+      if (process.env.NVIDIA_FREE_ONLY !== "true") return models;
+      return models.filter((m: any) => {
+        const p = m.pricing;
+        if (!p) return false;
+        return (
+          (p.input === "0" || p.input === 0) &&
+          (p.output === "0" || p.output === 0)
+        );
+      });
+    },
   },
   nebius: {
     url: "https://api.tokenfactory.nebius.com/v1/models",

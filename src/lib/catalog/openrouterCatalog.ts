@@ -103,6 +103,15 @@ async function fetchFromAPI(): Promise<CatalogEntry[]> {
   return models;
 }
 
+/** Filter catalog to free-only models if OPENROUTER_FREE_ONLY=true.
+ *  Free models have a :free suffix OR zero prompt+completion pricing. */
+function applyFreeFilter(data: CatalogEntry[]): CatalogEntry[] {
+  if (process.env.OPENROUTER_FREE_ONLY !== "true") return data;
+  return data.filter(
+    (m) => m.id.endsWith(":free") || (m.pricing?.prompt === "0" && m.pricing?.completion === "0")
+  );
+}
+
 /**
  * Get OpenRouter model catalog.
  *
@@ -126,7 +135,7 @@ export async function getOpenRouterCatalog(): Promise<{
     const age = now - new Date(cache.fetchedAt).getTime();
     if (age < ttl) {
       return {
-        data: cache.data,
+        data: applyFreeFilter(cache.data),
         stale: false,
         cachedAt: cache.fetchedAt,
         fromCache: true,
@@ -138,14 +147,14 @@ export async function getOpenRouterCatalog(): Promise<{
   try {
     const data = await fetchFromAPI();
     writeCache(data);
-    return { data, stale: false, cachedAt: null, fromCache: false };
+    return { data: applyFreeFilter(data), stale: false, cachedAt: null, fromCache: false };
   } catch (err) {
     console.warn("[OpenRouterCatalog] Fetch failed, using stale cache:", err);
 
     // Stale-if-error: return old cache if available
     if (cache) {
       return {
-        data: cache.data,
+        data: applyFreeFilter(cache.data),
         stale: true,
         cachedAt: cache.fetchedAt,
         fromCache: true,
@@ -169,7 +178,7 @@ export async function refreshOpenRouterCatalog(): Promise<{
   try {
     const data = await fetchFromAPI();
     writeCache(data);
-    return { data, ok: true };
+    return { data: applyFreeFilter(data), ok: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     return { data: [], ok: false, error };
