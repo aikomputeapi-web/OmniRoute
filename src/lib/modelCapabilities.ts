@@ -4,6 +4,7 @@ import {
 } from "@omniroute/open-sse/config/providerModels.ts";
 import { parseModel, resolveCanonicalProviderModel } from "@omniroute/open-sse/services/model.ts";
 import { MODEL_SPECS, getModelSpec, type ModelSpec } from "@/shared/constants/modelSpecs";
+import { isVisionModelId } from "@/shared/constants/visionModels";
 import { getSyncedCapability } from "@/lib/modelsDevSync";
 
 const TOOL_CALLING_UNSUPPORTED_PATTERNS: string[] = [];
@@ -180,6 +181,7 @@ function resolveVisionCapability(
   spec: ModelSpec | undefined,
   registryModel: { supportsVision?: boolean } | null,
   synced: SyncedCapabilities,
+  modelId: string | null,
   modalitiesInput: string[],
   modalitiesOutput: string[]
 ): boolean | null {
@@ -197,6 +199,9 @@ function resolveVisionCapability(
 
   if (typeof registryModel?.supportsVision === "boolean") return registryModel.supportsVision;
   if (typeof spec?.supportsVision === "boolean") return spec.supportsVision;
+  if (isVisionModelId(modelId || "")) {
+    return true;
+  }
 
   return null;
 }
@@ -249,6 +254,7 @@ export function getResolvedModelCapabilities(input: CapabilityInput): ResolvedMo
       spec,
       registryModel,
       synced,
+      resolved.model,
       modalitiesInput,
       modalitiesOutput
     ),

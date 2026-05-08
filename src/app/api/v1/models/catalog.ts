@@ -25,6 +25,7 @@ import {
   getCatalogDiagnosticsHeaders,
 } from "@/lib/modelMetadataRegistry";
 import { isAuthRequired, isDashboardSessionAuthenticated } from "@/shared/utils/apiAuth";
+import { isVisionModelId } from "@/shared/constants/visionModels";
 
 const FALLBACK_ALIAS_TO_PROVIDER = {
   ag: "antigravity",
@@ -39,38 +40,6 @@ const FALLBACK_ALIAS_TO_PROVIDER = {
   kr: "kiro",
   qw: "qwen",
 };
-
-const VISION_MODEL_KEYWORDS = [
-  "gpt-4o",
-  "gpt-4.1",
-  "gpt-4-vision",
-  "gpt-4-turbo",
-  "claude-3",
-  "claude-3.5",
-  "claude-3-5",
-  "claude-4",
-  "claude-opus",
-  "claude-sonnet",
-  "claude-haiku",
-  "gemini",
-  "gemma",
-  "llava",
-  "bakllava",
-  "pixtral",
-  "mistral-pixtral",
-  "qwen-vl",
-  "qvq",
-  "glm-4.6v",
-  "glm-4.5v",
-  "vision",
-  "multimodal",
-];
-
-function isVisionModelId(modelId: string): boolean {
-  const normalized = String(modelId || "").toLowerCase();
-  if (!normalized) return false;
-  return VISION_MODEL_KEYWORDS.some((keyword) => normalized.includes(keyword));
-}
 
 function getVisionCapabilityFields(modelId: string) {
   if (!isVisionModelId(modelId)) return null;

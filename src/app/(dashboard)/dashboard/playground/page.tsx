@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useTranslations } from "next-intl";
 import { Card, Button, Select, Badge } from "@/shared/components";
 import { ALIAS_TO_ID } from "@/shared/constants/providers";
+import { isVisionModelId } from "@/shared/constants/visionModels";
 import { pickMaskedDisplayValue, pickDisplayValue } from "@/shared/utils/maskEmail";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import dynamic from "next/dynamic";
@@ -110,30 +111,6 @@ const ENDPOINT_PATHS: Record<string, string> = {
   rerank: "/v1/rerank",
   search: "/v1/search",
 };
-
-// Models known to support vision (image input)
-const VISION_MODELS = [
-  "gpt-4o",
-  "gpt-4o-mini",
-  "gpt-4-turbo",
-  "gpt-4-vision",
-  "claude-3",
-  "claude-sonnet",
-  "claude-opus",
-  "claude-haiku",
-  "gemini",
-  "llava",
-  "bakllava",
-  "pixtral",
-  "qwen-vl",
-  "qvq",
-  "mistral-pixtral",
-];
-
-function isVisionModel(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
-  return VISION_MODELS.some((k) => lower.includes(k));
-}
 
 /** Convert a File to base64 data URI */
 async function fileToBase64(file: File): Promise<string> {
