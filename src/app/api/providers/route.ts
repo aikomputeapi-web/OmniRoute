@@ -54,7 +54,7 @@ export async function GET(request: Request) {
   }
 }
 
-// POST /api/providers - Create new connection (API Key only, OAuth via separate flow)
+// POST /api/providers - Create new connection (supports both API Key and OAuth)
 export async function POST(request: Request) {
   const authError = await requireManagementAuth(request);
   if (authError) return authError;
@@ -71,7 +71,15 @@ export async function POST(request: Request) {
     }
     const {
       provider,
+      authType,
       apiKey,
+      // OAuth fields
+      accessToken,
+      refreshToken,
+      idToken,
+      email,
+      expiresAt,
+      // Existing fields
       name,
       priority,
       globalPriority,
@@ -146,9 +154,16 @@ export async function POST(request: Request) {
 
     const newConnection = await createProviderConnection({
       provider,
-      authType: "apikey",
+      authType: authType || "apikey",
       name,
       apiKey,
+      // OAuth fields
+      accessToken,
+      refreshToken,
+      idToken,
+      email,
+      expiresAt,
+      // Existing fields
       priority: priority || 1,
       globalPriority: globalPriority || null,
       defaultModel: defaultModel || null,

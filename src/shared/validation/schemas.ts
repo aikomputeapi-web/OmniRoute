@@ -244,7 +244,15 @@ export type { ValidationResult } from "./helpers";
 export const createProviderSchema = z
   .object({
     provider: z.string().min(1).max(100),
+    authType: z.enum(["apikey", "oauth"]).optional().default("apikey"),
     apiKey: z.string().max(10000).optional(),
+    // OAuth-specific fields
+    accessToken: z.string().max(10000).optional(),
+    refreshToken: z.string().max(10000).optional(),
+    idToken: z.string().max(10000).optional(),
+    email: z.string().email().max(200).optional(),
+    expiresAt: z.string().optional(),
+    // Existing fields
     name: z.string().min(1).max(200),
     priority: z.number().int().min(1).max(100).optional(),
     globalPriority: z.number().int().min(1).max(100).nullable().optional(),
@@ -258,17 +266,31 @@ export const createProviderSchema = z
       }),
   })
   .superRefine((data, ctx) => {
-    const apiKey = typeof data.apiKey === "string" ? data.apiKey.trim() : "";
-    const apiKeyOptional =
-      data.provider === "searxng-search" ||
-      data.provider === "petals" ||
-      isLocalProvider(data.provider);
-    if (!apiKeyOptional && apiKey.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "API key is required",
-        path: ["apiKey"],
-      });
+    // Validate required fields based on authType
+    const authType = data.authType || "apikey";
+
+    if (authType === "apikey") {
+      const apiKey = typeof data.apiKey === "string" ? data.apiKey.trim() : "";
+      const apiKeyOptional =
+        data.provider === "searxng-search" ||
+        data.provider === "petals" ||
+        isLocalProvider(data.provider);
+      if (!apiKeyOptional && apiKey.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "API key is required for apikey authType",
+          path: ["apiKey"],
+        });
+      }
+    } else if (authType === "oauth") {
+      const accessToken = typeof data.accessToken === "string" ? data.accessToken.trim() : "";
+      if (accessToken.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "accessToken is required for oauth authType",
+          path: ["accessToken"],
+        });
+      }
     }
 
     const cx =
