@@ -21,6 +21,11 @@ declare namespace NodeJS {
     PORT?: string;
     API_HOST?: string;
     DASHBOARD_PORT?: string;
+    PORTAL_DATABASE_URL?: string;
+    REDIS_URL?: string;
+    REDIS_CONNECTION_STRING?: string;
+    USER_RATE_LIMIT_ENABLED?: string;
+    USER_RATE_LIMIT_FAIL_OPEN?: string;
     OMNIROUTE_PUBLIC_BASE_URL?: string;
     OMNIROUTE_CGPT_WEB_IMAGE_TIMEOUT_MS?: string;
     OMNIROUTE_CGPT_WEB_IMAGE_CACHE_MAX_MB?: string;
@@ -119,4 +124,59 @@ declare module "yazl" {
     end(options?: Record<string, unknown>, callback?: () => void): void;
     outputStream: NodeJS.ReadableStream;
   }
+}
+
+declare module "pg" {
+  export interface QueryResultRow {
+    [column: string]: unknown;
+  }
+
+  export interface QueryResult<T extends QueryResultRow = QueryResultRow> {
+    rows: T[];
+  }
+
+  export class PoolClient {
+    query<T extends QueryResultRow = QueryResultRow>(
+      text: string,
+      values?: readonly unknown[]
+    ): Promise<QueryResult<T>>;
+    release(): void;
+  }
+
+  export class Pool {
+    constructor(options?: { connectionString?: string; max?: number; idleTimeoutMillis?: number; connectionTimeoutMillis?: number; allowExitOnIdle?: boolean });
+    connect(): Promise<PoolClient>;
+    query<T extends QueryResultRow = QueryResultRow>(
+      text: string,
+      values?: readonly unknown[]
+    ): Promise<QueryResult<T>>;
+    end(): Promise<void>;
+    on(event: "error", listener: (error: Error) => void): this;
+  }
+}
+
+declare module "redis" {
+  export interface RedisClientOptions {
+    url?: string;
+  }
+
+  export interface RedisMulti {
+    incr(key: string): RedisMulti;
+    expire(key: string, seconds: number): RedisMulti;
+    exec(): Promise<unknown>;
+  }
+
+  export interface RedisClientType {
+    isOpen: boolean;
+    isReady: boolean;
+    connect(): Promise<void>;
+    quit(): Promise<void>;
+    get(key: string): Promise<string | null>;
+    set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
+    eval(script: string, options: { keys?: string[]; arguments?: string[] }): Promise<unknown>;
+    multi(): RedisMulti;
+    on?(event: "error", listener: (error: Error) => void): void;
+  }
+
+  export function createClient(options?: RedisClientOptions): RedisClientType;
 }

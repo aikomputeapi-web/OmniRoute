@@ -10,6 +10,8 @@ import {
   touchSessionAccountAffinity,
   deleteSessionAccountAffinity,
 } from "@/lib/localDb";
+import { getUserPlan } from "@/lib/portalDb";
+import type { UserPlan } from "@/types/rateLimit";
 import {
   DEFAULT_QUOTA_THRESHOLD_PERCENT,
   getQuotaCache,
@@ -94,7 +96,10 @@ interface CooldownInspectionState {
 
 const MIN_QUOTA_THRESHOLD_PERCENT = 1;
 const MAX_QUOTA_THRESHOLD_PERCENT = 100;
+const USER_PLAN_CACHE_TTL_MS = 5 * 60 * 1000;
 const NON_RETRYABLE_MODEL_LOCKOUT_REASONS = new Set(["not_found", "not_found_local"]);
+
+const userPlanCache = new Map<string, { timestamp: number; value: UserPlan | null }>();
 
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
@@ -1701,4 +1706,24 @@ export async function isValidApiKey(apiKey: string) {
   if (envKey && apiKey === envKey) return true;
 
   return await validateApiKey(apiKey);
+}
+
+export async function getUserPlanForApiKey(apiKeyId: string): Promise<UserPlan | null> {
+  const normalizedApiKeyId = typeof apiKeyId === "string" ? apiKeyId.trim() : "";
+  if (!normalizedApiKeyId) return null;
+
+  const cached = userPlanCache.get(normalizedApiKeyId);
+  if (cached && Date.now() - cached.timestamp < USER_PLAN_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  try {
+    const userPlan = await getUserPlan(normalizedApiKeyId, { lookupBy: "apiKeyId" });
+    userPlanCache.set(normalizedApiKeyId, { value: userPlan, timestamp: Date.now() });
+    return userPlan;
+  } catch (error) {
+    log.error({ err: error, apiKeyId: normalizedApiKeyId }, "Failed to resolve user plan for API key");
+    userPlanCache.set(normalizedApiKeyId, { value: null, timestamp: Date.now() });
+    return null;
+  }
 }

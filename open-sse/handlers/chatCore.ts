@@ -66,7 +66,9 @@ import {
   getModelUpstreamExtraHeaders,
   getUpstreamProxyConfig,
 } from "@/lib/localDb";
-import { getProviderCredentials, extractSessionAffinityKey } from "@/sse/services/auth";
+import { getProviderCredentials, extractSessionAffinityKey, getUserPlanForApiKey } from "@/sse/services/auth";
+import { UserRateLimitManager } from "../services/userRateLimitManager.ts";
+import type { QuotaInfo } from "@/types/rateLimit";
 import { deleteSessionAccountAffinity } from "@/lib/db/sessionAccountAffinity";
 import { getExecutor } from "../executors/index.ts";
 import { getCacheControlSettings } from "@/lib/cacheControlSettings";
@@ -173,6 +175,20 @@ const CHAT_LOG_TEXT_LIMIT = 64 * 1024;
 const CHAT_LOG_ARRAY_TAIL_ITEMS = 24;
 const CHAT_LOG_MAX_DEPTH = 6;
 const CHAT_LOG_MAX_OBJECT_KEYS = 80;
+
+const userRateLimitManager = new UserRateLimitManager();
+
+function buildQuotaHeaders(quotaInfo: QuotaInfo | null): Record<string, string> {
+  if (!quotaInfo) return {};
+  return {
+    "X-RateLimit-Limit-Minute": String(quotaInfo.minute.limit),
+    "X-RateLimit-Remaining-Minute": String(quotaInfo.minute.remaining ?? 0),
+    "X-RateLimit-Limit-Day": String(quotaInfo.day.limit),
+    "X-RateLimit-Remaining-Day": String(quotaInfo.day.remaining ?? 0),
+    "X-RateLimit-Limit-Month": String(quotaInfo.month.limit),
+    "X-RateLimit-Remaining-Month": String(quotaInfo.month.remaining ?? 0),
+  };
+}
 
 function capMemoryExtractionText(value: string): string {
   if (value.length <= MEMORY_EXTRACTION_TEXT_LIMIT) return value;
@@ -971,6 +987,14 @@ export async function handleChatCore({
   const requestedModel =
     typeof body?.model === "string" && body.model.trim().length > 0 ? body.model : model;
   const startTime = Date.now();
+  const isAnthropicOrOpenAIProvider =
+    provider === "openai" ||
+    provider === "anthropic" ||
+    provider === "claude" ||
+    provider.startsWith("openai-compatible-") ||
+    provider.startsWith("anthropic-compatible-");
+  let userPlanInfo: { userId: string; planId: string; planName?: string; planLimits?: { requestsPerMinute: number; requestsPerDay: number; requestsPerMonth: number }; source?: string; active?: boolean } | null = null;
+  let userRateLimitQuotaInfo: QuotaInfo | null = null;
   // Per-request trace id + checkpoint helper. Lets us see exactly which await
   // a hung request was sitting on in `[STAGE_TRACE]` log lines.
   const traceId = Math.random().toString(36).slice(2, 8);
@@ -1107,6 +1131,35 @@ export async function handleChatCore({
 
   // Initialize rate limit settings from persisted DB (once, lazy)
   await initializeRateLimits();
+
+  if (isAnthropicOrOpenAIProvider && apiKeyInfo?.id) {
+    userPlanInfo = await getUserPlanForApiKey(apiKeyInfo.id).catch((error) => {
+      log?.error?.("USER_RATE_LIMIT", "Failed to resolve user plan for API key", {
+        apiKeyId: apiKeyInfo.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+
+    if (!userPlanInfo) {
+      log?.warn?.("USER_RATE_LIMIT", "No subscription plan found for API key", {
+        apiKeyId: apiKeyInfo.id,
+      });
+      return createErrorResult(
+        HTTP_STATUS.FORBIDDEN,
+        "No active subscription plan found for this API key"
+      );
+    }
+
+    log?.info?.("USER_RATE_LIMIT", "Resolved user plan for request", {
+      apiKeyId: apiKeyInfo.id,
+      userId: userPlanInfo.userId,
+      planId: userPlanInfo.planId,
+      planName: userPlanInfo.planName || null,
+      planSource: userPlanInfo.source || null,
+      active: userPlanInfo.active ?? null,
+    });
+  }
 
   // T07: Inject connectionId into credentials so executors can rotate API keys
   // using providerSpecificData.extraApiKeys (API Key Round-Robin feature)
@@ -2937,6 +2990,52 @@ export async function handleChatCore({
   let claudePromptCacheLogMeta = null;
 
   try {
+    if (isAnthropicOrOpenAIProvider && userPlanInfo?.userId && userPlanInfo.planId) {
+      const userRateLimit = await userRateLimitManager.checkUserRateLimit(
+        userPlanInfo.userId,
+        userPlanInfo.planId
+      );
+      userRateLimitQuotaInfo = userRateLimit.quotaInfo;
+      log?.info?.("USER_RATE_LIMIT", `Check ${userRateLimit.allowed ? "allowed" : "denied"}`, {
+        userId: userPlanInfo.userId,
+        planId: userPlanInfo.planId,
+        planName: userPlanInfo.planName || null,
+        allowed: userRateLimit.allowed,
+        reason: userRateLimit.reason || null,
+        retryAfter: userRateLimit.retryAfter || null,
+      });
+      if (!userRateLimit.allowed) {
+        log?.warn?.("USER_RATE_LIMIT", "Subscription quota exceeded", {
+          userId: userPlanInfo.userId,
+          planId: userPlanInfo.planId,
+          planName: userPlanInfo.planName || null,
+          reason: userRateLimit.reason || null,
+          retryAfter: userRateLimit.retryAfter || null,
+        });
+        const headers = {
+          "Content-Type": "application/json",
+          "Retry-After": String(userRateLimit.retryAfter || 60),
+          ...buildQuotaHeaders(userRateLimit.quotaInfo),
+        };
+        return {
+          success: false,
+          status: HTTP_STATUS.RATE_LIMITED,
+          error: `Rate limit exceeded for ${userPlanInfo.planName || userPlanInfo.planId} tier. Try again in ${userRateLimit.retryAfter || 60}s.`,
+          response: new Response(
+            JSON.stringify({
+              error: {
+                message: `Rate limit exceeded for ${userPlanInfo.planName || userPlanInfo.planId} tier. Try again in ${userRateLimit.retryAfter || 60}s.`,
+                type: "rate_limit_error",
+                code: "user_rate_limit_exceeded",
+                quota: userRateLimit.quotaInfo,
+              },
+            }),
+            { status: HTTP_STATUS.RATE_LIMITED, headers }
+          ),
+        };
+      }
+    }
+
     const result = await executeProviderRequest(effectiveModel, true);
 
     providerResponse = result.response;
@@ -3629,6 +3728,15 @@ export async function handleChatCore({
     if (onRequestSuccess) {
       await onRequestSuccess();
     }
+    if (isAnthropicOrOpenAIProvider && userPlanInfo?.userId) {
+      await userRateLimitManager.incrementUserUsage(userPlanInfo.userId).catch((error) => {
+        log?.error?.("USER_RATE_LIMIT", "Failed to record successful request usage", {
+          userId: userPlanInfo.userId,
+          planId: userPlanInfo.planId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     await maybeSyncClaudeExtraUsageState({
       provider,
       connectionId,
@@ -3893,6 +4001,7 @@ export async function handleChatCore({
         headers: {
           "Content-Type": "application/json",
           [OMNIROUTE_RESPONSE_HEADERS.cache]: "MISS",
+          ...buildQuotaHeaders(userRateLimitQuotaInfo),
           ...buildOmniRouteResponseMetaHeaders({
             provider,
             model,
@@ -3954,12 +4063,22 @@ export async function handleChatCore({
   if (onRequestSuccess) {
     await onRequestSuccess();
   }
+  if (isAnthropicOrOpenAIProvider && userPlanInfo?.userId) {
+    await userRateLimitManager.incrementUserUsage(userPlanInfo.userId).catch((error) => {
+      log?.error?.("USER_RATE_LIMIT", "Failed to record successful stream usage", {
+        userId: userPlanInfo.userId,
+        planId: userPlanInfo.planId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
 
   const responseHeaders = {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
     [OMNIROUTE_RESPONSE_HEADERS.cache]: "MISS",
+    ...buildQuotaHeaders(userRateLimitQuotaInfo),
     ...buildOmniRouteResponseMetaHeaders({
       provider,
       model,
