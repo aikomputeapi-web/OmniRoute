@@ -130,28 +130,28 @@ _Connect any AI-powered IDE or CLI tool through OmniRoute — free API gateway f
       </td>
       <td align="center" width="110">
         <a href="https://github.com/openai/codex">
-          <img src="./public/providers/codex.png" alt="Codex CLI" width="48"/><br/>
+          <img src="./public/providers/codex.svg" alt="Codex CLI" width="48"/><br/>
           <b>Codex CLI</b>
         </a><br/>
         <sub>⭐ 60.8K</sub>
       </td>
       <td align="center" width="110">
         <a href="https://github.com/anthropics/claude-code">
-          <img src="./public/providers/claude.png" alt="Claude Code" width="48"/><br/>
+          <img src="./public/providers/claude.svg" alt="Claude Code" width="48"/><br/>
           <b>Claude Code</b>
         </a><br/>
         <sub>⭐ 67.3K</sub>
       </td>
       <td align="center" width="110">
         <a href="https://github.com/google-gemini/gemini-cli">
-          <img src="./public/providers/gemini-cli.png" alt="Gemini CLI" width="48"/><br/>
+          <img src="./public/providers/gemini-cli.svg" alt="Gemini CLI" width="48"/><br/>
           <b>Gemini CLI</b>
         </a><br/>
         <sub>⭐ 94.7K</sub>
       </td>
       <td align="center" width="110">
         <a href="https://github.com/Kilo-Org/kilocode">
-          <img src="./public/providers/kilocode.png" alt="Kilo Code" width="48"/><br/>
+          <img src="./public/providers/kilocode.svg" alt="Kilo Code" width="48"/><br/>
           <b>Kilo Code</b>
         </a><br/>
         <sub>⭐ 15.5K</sub>
@@ -2267,25 +2267,25 @@ Se não quiser criar credenciais próprias agora, ainda é possível usar o flux
 
 ## Dokumentasjon
 
-| Document                                                 | Description                                         |
-| -------------------------------------------------------- | --------------------------------------------------- |
-| [User Guide](docs/USER_GUIDE.md)                         | Providers, combos, CLI integration, deployment      |
-| [API Reference](docs/API_REFERENCE.md)                   | All endpoints with examples                         |
-| [MCP Server](open-sse/mcp-server/README.md)              | 25 MCP tools, IDE configs, Python/TS/Go clients     |
-| [A2A Server](src/lib/a2a/README.md)                      | JSON-RPC 2.0 protocol, skills, streaming, task mgmt |
-| [Auto-Combo Engine](docs/AUTO-COMBO.md)                  | 6-factor scoring, mode packs, self-healing          |
-| [Context Relay](docs/features/context-relay.md)          | Session handoff strategy for account rotation       |
-| [Troubleshooting](docs/TROUBLESHOOTING.md)               | Common problems and solutions                       |
-| [Architecture](docs/ARCHITECTURE.md)                     | System architecture and internals                   |
-| [Codebase Documentation](docs/CODEBASE_DOCUMENTATION.md) | Beginner-friendly codebase walkthrough              |
-| [Uninstall Guide](docs/UNINSTALL.md)                     | Clean removal for all install methods               |
-| [Environment Config](docs/ENVIRONMENT.md)                | Complete `.env` variables and references            |
-| [Contributing](CONTRIBUTING.md)                          | Development setup and guidelines                    |
-| [OpenAPI Spec](docs/openapi.yaml)                        | OpenAPI 3.0 specification                           |
-| [Security Policy](SECURITY.md)                           | Vulnerability reporting and security practices      |
-| [VM Deployment](docs/VM_DEPLOYMENT_GUIDE.md)             | Complete guide: VM + nginx + Cloudflare setup       |
-| [Features Gallery](docs/FEATURES.md)                     | Visual dashboard tour with screenshots              |
-| [Release Checklist](docs/RELEASE_CHECKLIST.md)           | Pre-release validation steps                        |
+| Document                                                              | Description                                         |
+| --------------------------------------------------------------------- | --------------------------------------------------- |
+| [User Guide](docs/guides/USER_GUIDE.md)                               | Providers, combos, CLI integration, deployment      |
+| [API Reference](docs/reference/API_REFERENCE.md)                      | All endpoints with examples                         |
+| [MCP Server](open-sse/mcp-server/README.md)                           | 25 MCP tools, IDE configs, Python/TS/Go clients     |
+| [A2A Server](src/lib/a2a/README.md)                                   | JSON-RPC 2.0 protocol, skills, streaming, task mgmt |
+| [Auto-Combo Engine](docs/routing/AUTO-COMBO.md)                       | 6-factor scoring, mode packs, self-healing          |
+| [Context Relay](docs/features/context-relay.md)                       | Session handoff strategy for account rotation       |
+| [Troubleshooting](docs/guides/TROUBLESHOOTING.md)                     | Common problems and solutions                       |
+| [Architecture](docs/architecture/ARCHITECTURE.md)                     | System architecture and internals                   |
+| [Codebase Documentation](docs/architecture/CODEBASE_DOCUMENTATION.md) | Beginner-friendly codebase walkthrough              |
+| [Uninstall Guide](docs/guides/UNINSTALL.md)                           | Clean removal for all install methods               |
+| [Environment Config](docs/reference/ENVIRONMENT.md)                   | Complete `.env` variables and references            |
+| [Contributing](CONTRIBUTING.md)                                       | Development setup and guidelines                    |
+| [OpenAPI Spec](docs/reference/openapi.yaml)                           | OpenAPI 3.0 specification                           |
+| [Security Policy](SECURITY.md)                                        | Vulnerability reporting and security practices      |
+| [VM Deployment](docs/ops/VM_DEPLOYMENT_GUIDE.md)                      | Complete guide: VM + nginx + Cloudflare setup       |
+| [Features Gallery](docs/guides/FEATURES.md)                           | Visual dashboard tour with screenshots              |
+| [Release Checklist](docs/ops/RELEASE_CHECKLIST.md)                    | Pre-release validation steps                        |
 
 ---
 

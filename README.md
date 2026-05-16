@@ -6,7 +6,11 @@
 
 _The most complete open-source AI proxy — **one endpoint**, **160+ providers**, **13 routing strategies**, zero downtime. Multi-platform: **Web**, **Desktop (Electron)**, **Mobile (PWA + Termux)**. Fully extensible via **MCP Server (37 tools)**, **A2A Protocol**, and **Memory/Skills** systems. Available in **40+ languages**._
 
-**Chat Completions • Responses API • Embeddings • Image Generation • Video • Music • Audio Speech/Transcription • Reranking • Moderations • Web Search • MCP Server • A2A Protocol • 4,600+ Tests • 100% TypeScript**
+[![npm](https://img.shields.io/npm/v/omniroute?logo=npm&style=flat-square)](https://www.npmjs.com/package/omniroute)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A522.22.2-brightgreen?style=flat-square)](package.json)
+[![Stars](https://img.shields.io/github/stars/diegosouzapw/OmniRoute?style=social)](https://github.com/diegosouzapw/OmniRoute)
+[![Trendshift](https://trendshift.io/api/badge/repositories/23589)](https://trendshift.io/repositories/23589)
 
 <br/>
 
@@ -136,28 +140,28 @@ _Connect any AI-powered IDE or CLI tool through OmniRoute — free API gateway f
       </td>
       <td align="center" width="110">
         <a href="https://github.com/openai/codex">
-          <img src="./public/providers/codex.png" alt="Codex CLI" width="48"/><br/>
+          <img src="./public/providers/codex.svg" alt="Codex CLI" width="48"/><br/>
           <b>Codex CLI</b>
         </a><br/>
         <sub>⭐ 60.8K</sub>
       </td>
       <td align="center" width="110">
         <a href="https://github.com/anthropics/claude-code">
-          <img src="./public/providers/claude.png" alt="Claude Code" width="48"/><br/>
+          <img src="./public/providers/claude.svg" alt="Claude Code" width="48"/><br/>
           <b>Claude Code</b>
         </a><br/>
         <sub>⭐ 67.3K</sub>
       </td>
       <td align="center" width="110">
         <a href="https://github.com/google-gemini/gemini-cli">
-          <img src="./public/providers/gemini-cli.png" alt="Gemini CLI" width="48"/><br/>
+          <img src="./public/providers/gemini-cli.svg" alt="Gemini CLI" width="48"/><br/>
           <b>Gemini CLI</b>
         </a><br/>
         <sub>⭐ 94.7K</sub>
       </td>
       <td align="center" width="110">
         <a href="https://github.com/Kilo-Org/kilocode">
-          <img src="./public/providers/kilocode.png" alt="Kilo Code" width="48"/><br/>
+          <img src="./public/providers/kilocode.svg" alt="Kilo Code" width="48"/><br/>
           <b>Kilo Code</b>
         </a><br/>
         <sub>⭐ 15.5K</sub>
@@ -665,7 +669,7 @@ PORT=20128 DASHBOARD_PORT=20129 NEXT_PUBLIC_BASE_URL=http://localhost:20129 npm 
 
 **MCP:** `omniroute --mcp` (stdio transport)
 
-**CLI options:** `omniroute --port 3000`, `omniroute --no-open`, `omniroute --help`
+**CLI options:** `omniroute setup`, `omniroute doctor`, `omniroute providers available`, `omniroute providers list`, `omniroute --port 3000`, `omniroute --no-open`, `omniroute --help`
 
 **Split-port mode:** `PORT=20128 DASHBOARD_PORT=20129 omniroute`
 
@@ -1030,6 +1034,34 @@ Combo: "my-coding-stack"              Format Translation:
 ---
 
 ## 🎯 Use Cases — Ready-Made Combo Playbooks
+
+### Case 0: "I want zero-config, auto-routing NOW"
+
+**Problem:** Don't want to create combos manually. Just want AI routing to work immediately.
+
+```bash
+# No combo creation needed! Use auto/ prefix directly:
+model: "auto"           # Default LKGP routing across all connected providers
+model: "auto/coding"    # Quality-first weights for code generation
+model: "auto/fast"      # Low-latency routing (fastest provider first)
+model: "auto/cheap"     # Cost-optimized (cheapest per token)
+model: "auto/offline"   # High availability (most quota available)
+model: "auto/smart"     # Best discovery (10% exploration rate)
+```
+
+**How it works:**
+
+1. Add providers in Dashboard → Providers (OAuth or API key)
+2. Use `auto/` prefix in any AI tool — **no combo creation needed**
+3. OmniRoute dynamically builds a virtual combo from your active connections
+4. Routes using LKGP (Last Known Good Provider) + 6-factor scoring
+5. Session stickiness ensures consistent provider selection
+
+**Dashboard indicator:** A blue banner at the top shows "Auto-Routing Active" with a link to `/dashboard/combos` for configuration.
+
+**Monthly cost:** $0 (uses your existing free providers) or whatever your connected providers cost
+
+---
 
 ### Case 1: "I have a Claude Pro subscription"
 
@@ -1514,9 +1546,10 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 <div align="center">
-  <sub>Built with ❤️ for developers who code 24/7</sub>
-  <br/>
-  <sub><a href="https://omniroute.online">omniroute.online</a></sub>
+
+**[⬆ Back to top](#-omniroute)** · Built with ❤️ for the open-source AI community.
+
+<sub>OmniRoute v3.8.0 · Node ≥22.22.2 · MIT License · <a href="https://omniroute.online">omniroute.online</a></sub>
+
 </div>
 <!-- GitHub Discussions enabled for community Q&A -->
-
