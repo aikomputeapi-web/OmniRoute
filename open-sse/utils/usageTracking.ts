@@ -507,7 +507,7 @@ export function logUsage(
   usage,
   model: string | null = null,
   connectionId: string | null = null,
-  apiKeyInfo = null
+  apiKeyInfo: any = null
 ) {
   if (!usage || typeof usage !== "object") return;
 
@@ -518,13 +518,19 @@ export function logUsage(
   // - Claude: input_tokens, output_tokens
   const inTokens = getLoggedInputTokens(usage);
   const outTokens = getLoggedOutputTokens(usage);
-  void apiKeyInfo;
+  const apiKeyId = apiKeyInfo?.id || null;
+  const apiKeyName = apiKeyInfo?.name || null;
   const normalizedConnectionId = typeof connectionId === "string" ? connectionId : undefined;
   const accountPrefix = normalizedConnectionId
     ? normalizedConnectionId.slice(0, 8) + "..."
     : "unknown";
 
   let msg = `[${getTimeString()}] 📊 ${COLORS.green}[USAGE] ${p} | in=${inTokens} | out=${outTokens} | account=${accountPrefix}${COLORS.reset}`;
+
+  // Add API key attribution if available
+  if (apiKeyName) {
+    msg += ` | key=${apiKeyName}`;
+  }
 
   // Add estimated flag if present
   if (usage.estimated) {
@@ -556,6 +562,8 @@ export function logUsage(
     model: typeof model === "string" ? model : undefined,
     provider: typeof provider === "string" ? provider : undefined,
     connectionId: normalizedConnectionId,
+    apiKeyId: apiKeyId || undefined,
+    apiKeyName: apiKeyName || undefined,
     tokens,
     status: "200 OK",
   }).catch(() => {});
