@@ -46,6 +46,7 @@ export interface ApiKeyMetadata {
   accessSchedule?: AccessSchedule | null;
   maxRequestsPerDay?: number | null;
   maxRequestsPerMinute?: number | null;
+  maxRequestsPerMonth?: number | null;
   maxSessions?: number | null;
   rateLimits?: RateLimitRule[] | null;
 }
@@ -263,15 +264,19 @@ export async function enforceApiKeyPolicy(
 
   // ── Check 5: Generic Multi-Window Rate Limits ──
   if (apiKeyInfo.id) {
-    const rulesToApply =
-      apiKeyInfo.rateLimits && apiKeyInfo.rateLimits.length > 0
-        ? [...apiKeyInfo.rateLimits]
-        : [...DEFAULT_RATE_LIMITS];
+    let rulesToApply: RateLimitRule[] = [];
+    if (apiKeyInfo.rateLimits && apiKeyInfo.rateLimits.length > 0) {
+      rulesToApply = [...apiKeyInfo.rateLimits];
+    } else {
+      rulesToApply = [...DEFAULT_RATE_LIMITS];
 
-    // Combine with legacy limits if they exist and custom rate limits aren't set
-    if (!apiKeyInfo.rateLimits || apiKeyInfo.rateLimits.length === 0) {
       if (apiKeyInfo.maxRequestsPerDay) {
+        rulesToApply = rulesToApply.filter((r) => r.window !== 86400);
         rulesToApply.push({ limit: apiKeyInfo.maxRequestsPerDay, window: 86400 });
+      }
+      if (apiKeyInfo.maxRequestsPerMonth) {
+        rulesToApply = rulesToApply.filter((r) => r.window !== 2592000);
+        rulesToApply.push({ limit: apiKeyInfo.maxRequestsPerMonth, window: 2592000 });
       }
       if (apiKeyInfo.maxRequestsPerMinute) {
         rulesToApply.push({ limit: apiKeyInfo.maxRequestsPerMinute, window: 60 });

@@ -482,3 +482,25 @@ test("enforceApiKeyPolicy enforces request-per-minute limits and returns success
   assert.equal(second.rejection.status, 429);
   assert.match(await readErrorMessage(second.rejection), /Request limit exceeded/);
 });
+
+test("enforceApiKeyPolicy enforces request-per-month limits and returns success when allowed", async () => {
+  const limitedKey = await createKeyWithPolicy({
+    allowedModels: ["openai/*"],
+    maxRequestsPerMonth: 1,
+  });
+  const policy = await loadPolicy("request-limits-month");
+
+  const first = await policy.enforceApiKeyPolicy(
+    makePolicyRequest(limitedKey.key),
+    "openai/gpt-4.1"
+  );
+  assert.equal(first.rejection, null);
+  assert.equal(first.apiKeyInfo.maxRequestsPerMonth, 1);
+
+  const second = await policy.enforceApiKeyPolicy(
+    makePolicyRequest(limitedKey.key),
+    "openai/gpt-4.1"
+  );
+  assert.equal(second.rejection.status, 429);
+  assert.match(await readErrorMessage(second.rejection), /Request limit exceeded/);
+});

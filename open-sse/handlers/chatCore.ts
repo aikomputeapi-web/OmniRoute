@@ -75,7 +75,11 @@ import {
   getModelUpstreamExtraHeaders,
   getUpstreamProxyConfig,
 } from "@/lib/localDb";
-import { getProviderCredentials, extractSessionAffinityKey, getUserPlanForApiKey } from "@/sse/services/auth";
+import {
+  getProviderCredentials,
+  extractSessionAffinityKey,
+  getUserPlanForApiKey,
+} from "@/sse/services/auth";
 import { UserRateLimitManager } from "../services/userRateLimitManager.ts";
 import type { QuotaInfo } from "@/types/rateLimit";
 import { deleteSessionAccountAffinity } from "@/lib/db/sessionAccountAffinity";
@@ -1146,9 +1150,11 @@ function isCopilotClient(
   if (isMatch(userAgent)) return true;
 
   if (headers instanceof Headers) {
-    for (const [key, value] of headers) {
-      if (isMatch(key) || isMatch(value)) return true;
-    }
+    let matched = false;
+    headers.forEach((value, key) => {
+      if (isMatch(key) || isMatch(value)) matched = true;
+    });
+    if (matched) return true;
   } else if (headers && typeof headers === "object") {
     for (const [key, value] of Object.entries(headers)) {
       if (isMatch(key) || isMatch(value)) return true;
@@ -1194,13 +1200,31 @@ export async function handleChatCore({
     typeof body?.model === "string" && body.model.trim().length > 0 ? body.model : model;
   const isModelScope = () => isModelScopeProvider(provider, credentials?.providerSpecificData);
   const startTime = Date.now();
-  const isAnthropicOrOpenAIProvider =
+  const isPremiumProvider =
     provider === "openai" ||
     provider === "anthropic" ||
     provider === "claude" ||
+    provider === "kiro" ||
+    provider === "github" ||
+    provider === "antigravity" ||
+    provider === "codex" ||
+    provider === "gemini" ||
+    provider === "deepseek" ||
+    provider === "qwen" ||
+    provider === "nvidia" ||
+    provider === "cerebras" ||
+    provider === "azure-ai" ||
+    provider === "oci" ||
     provider.startsWith("openai-compatible-") ||
     provider.startsWith("anthropic-compatible-");
-  let userPlanInfo: { userId: string; planId: string; planName?: string; planLimits?: { requestsPerMinute: number; requestsPerDay: number; requestsPerMonth: number }; source?: string; active?: boolean } | null = null;
+  let userPlanInfo: {
+    userId: string;
+    planId: string;
+    planName?: string;
+    planLimits?: { requestsPerMinute: number; requestsPerDay: number; requestsPerMonth: number };
+    source?: string;
+    active?: boolean;
+  } | null = null;
   let userRateLimitQuotaInfo: QuotaInfo | null = null;
   // Per-request trace id + checkpoint helper. Lets us see exactly which await
   // a hung request was sitting on in `[STAGE_TRACE]` log lines.
@@ -1358,7 +1382,7 @@ export async function handleChatCore({
   // Initialize rate limit settings from persisted DB (once, lazy)
   await initializeRateLimits();
 
-  if (isAnthropicOrOpenAIProvider && apiKeyInfo?.id) {
+  if (isPremiumProvider && apiKeyInfo?.id) {
     userPlanInfo = await getUserPlanForApiKey(apiKeyInfo.id).catch((error) => {
       log?.error?.("USER_RATE_LIMIT", "Failed to resolve user plan for API key", {
         apiKeyId: apiKeyInfo.id,
@@ -3332,10 +3356,20 @@ export async function handleChatCore({
   let claudePromptCacheLogMeta = null;
 
   try {
-    if (isAnthropicOrOpenAIProvider && userPlanInfo?.userId && userPlanInfo.planId) {
+    if (isPremiumProvider && userPlanInfo?.userId && userPlanInfo.planId) {
+      const { estimateInputTokens } = await import("../utils/usageTracking.ts");
+      const inputTokensEstimate = estimateInputTokens(translatedBody);
+
+      const { getModelMultipliers } = await import("../services/userRateLimitManager.ts");
+      const multipliers = getModelMultipliers(effectiveModel);
+      const estimatedTokens = Math.ceil(
+        inputTokensEstimate * multipliers.input + 1000 * multipliers.output
+      );
+
       const userRateLimit = await userRateLimitManager.checkUserRateLimit(
         userPlanInfo.userId,
-        userPlanInfo.planId
+        userPlanInfo.planId,
+        estimatedTokens
       );
       userRateLimitQuotaInfo = userRateLimit.quotaInfo;
       log?.info?.("USER_RATE_LIMIT", `Check ${userRateLimit.allowed ? "allowed" : "denied"}`, {
@@ -3409,6 +3443,11 @@ export async function handleChatCore({
     );
   } catch (error) {
     trackPendingRequest(model, provider, connectionId, false);
+    if (userPlanInfo?.userId && userRateLimitQuotaInfo?.reserveId) {
+      userRateLimitManager
+        .reconcileUserUsage(userPlanInfo.userId, userRateLimitQuotaInfo.reserveId, 0)
+        .catch(() => {});
+    }
     if (isSemaphoreCapacityError(error)) {
       appendRequestLog({
         model,
@@ -3578,6 +3617,11 @@ export async function handleChatCore({
   // Check provider response - return error info for fallback handling
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false);
+    if (userPlanInfo?.userId && userRateLimitQuotaInfo?.reserveId) {
+      userRateLimitManager
+        .reconcileUserUsage(userPlanInfo.userId, userRateLimitQuotaInfo.reserveId, 0)
+        .catch(() => {});
+    }
 
     let statusCode = providerResponse.status;
     let message = "";
@@ -4149,11 +4193,40 @@ export async function handleChatCore({
         : responseBody
     );
 
+    // Log usage for non-streaming responses
+    const usage = extractUsageFromResponse(responseBody, provider);
+
     // Notify success - caller can clear error status if needed
     if (onRequestSuccess) {
       await onRequestSuccess();
     }
-    if (isAnthropicOrOpenAIProvider && userPlanInfo?.userId) {
+    if (isPremiumProvider && userPlanInfo?.userId) {
+      let actualTokens = 0;
+      if (usage) {
+        const usageObj = usage as {
+          input?: number;
+          prompt_tokens?: number;
+          input_tokens?: number;
+          output?: number;
+          completion_tokens?: number;
+          output_tokens?: number;
+        };
+        const { getModelMultipliers } = await import("../services/userRateLimitManager.ts");
+        const multipliers = getModelMultipliers(model || "");
+        const inputTokens = usageObj.input ?? usageObj.prompt_tokens ?? usageObj.input_tokens ?? 0;
+        const outputTokens =
+          usageObj.output ?? usageObj.completion_tokens ?? usageObj.output_tokens ?? 0;
+        actualTokens = Math.ceil(
+          inputTokens * multipliers.input + outputTokens * multipliers.output
+        );
+      }
+
+      if (userRateLimitQuotaInfo?.reserveId) {
+        await userRateLimitManager
+          .reconcileUserUsage(userPlanInfo.userId, userRateLimitQuotaInfo.reserveId, actualTokens)
+          .catch(() => {});
+      }
+
       await userRateLimitManager.incrementUserUsage(userPlanInfo.userId).catch((error) => {
         log?.error?.("USER_RATE_LIMIT", "Failed to record successful request usage", {
           userId: userPlanInfo.userId,
@@ -4168,9 +4241,6 @@ export async function handleChatCore({
       providerSpecificData: credentials?.providerSpecificData,
       log,
     });
-
-    // Log usage for non-streaming responses
-    const usage = extractUsageFromResponse(responseBody, provider);
     if (usage && typeof usage === "object") {
       attachCompressionUsageReceiptAfterAnalytics(usage as Record<string, unknown>, "provider");
     }
@@ -4242,7 +4312,10 @@ export async function handleChatCore({
     try {
       const firstChoice = translatedResponse?.choices?.[0];
       const msg = firstChoice?.message;
-      cacheReasoningFromAssistantMessage(msg, provider, model, { requestId: skillRequestId, messageIndex: 0 });
+      cacheReasoningFromAssistantMessage(msg, provider, model, {
+        requestId: skillRequestId,
+        messageIndex: 0,
+      });
     } catch {
       // Cache capture is non-critical — never block the response
     }
@@ -4472,7 +4545,7 @@ export async function handleChatCore({
   if (onRequestSuccess) {
     await onRequestSuccess();
   }
-  if (isAnthropicOrOpenAIProvider && userPlanInfo?.userId) {
+  if (isPremiumProvider && userPlanInfo?.userId) {
     await userRateLimitManager.incrementUserUsage(userPlanInfo.userId).catch((error) => {
       log?.error?.("USER_RATE_LIMIT", "Failed to record successful stream usage", {
         userId: userPlanInfo.userId,
@@ -4540,7 +4613,10 @@ export async function handleChatCore({
         const body = streamResponseBody as Record<string, unknown>;
         const choices = body.choices as { message?: Record<string, unknown> }[] | undefined;
         const msg = choices?.[0]?.message;
-        cacheReasoningFromAssistantMessage(msg, provider, model, { requestId: skillRequestId, messageIndex: 0 });
+        cacheReasoningFromAssistantMessage(msg, provider, model, {
+          requestId: skillRequestId,
+          messageIndex: 0,
+        });
       } catch {
         // Cache capture is non-critical — never block the stream
       }
@@ -4583,8 +4659,34 @@ export async function handleChatCore({
 
     if (apiKeyInfo?.id && streamUsage) {
       calculateCost(provider, model, streamUsage, { serviceTier: effectiveServiceTier })
-        .then((estimatedCost) => {
-          if (estimatedCost > 0) recordCost(apiKeyInfo.id, estimatedCost);
+        .then(async (actualCost) => {
+          if (actualCost > 0) recordCost(apiKeyInfo.id, actualCost);
+          if (userPlanInfo?.userId && userRateLimitQuotaInfo?.reserveId) {
+            const usageObj = streamUsage as {
+              input?: number;
+              prompt_tokens?: number;
+              input_tokens?: number;
+              output?: number;
+              completion_tokens?: number;
+              output_tokens?: number;
+            };
+            const { getModelMultipliers } = await import("../services/userRateLimitManager.ts");
+            const multipliers = getModelMultipliers(model || "");
+            const inputTokens =
+              usageObj.input ?? usageObj.prompt_tokens ?? usageObj.input_tokens ?? 0;
+            const outputTokens =
+              usageObj.output ?? usageObj.completion_tokens ?? usageObj.output_tokens ?? 0;
+            const actualTokens = Math.ceil(
+              inputTokens * multipliers.input + outputTokens * multipliers.output
+            );
+            userRateLimitManager
+              .reconcileUserUsage(
+                userPlanInfo.userId,
+                userRateLimitQuotaInfo.reserveId,
+                actualTokens
+              )
+              .catch(() => {});
+          }
         })
         .catch(() => {});
     }

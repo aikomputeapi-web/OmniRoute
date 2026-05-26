@@ -20,6 +20,9 @@ interface PlanRow extends QueryResultRow {
   requests_per_minute: number | string | null;
   requests_per_day: number | string | null;
   requests_per_month: number | string | null;
+  limit_5h_tokens: number | string | null;
+  limit_week_tokens: number | string | null;
+  limit_month_tokens: number | string | null;
 }
 
 interface UserPlanRow extends QueryResultRow {
@@ -29,6 +32,9 @@ interface UserPlanRow extends QueryResultRow {
   plan_requests_per_minute: number | string | null;
   plan_requests_per_day: number | string | null;
   plan_requests_per_month: number | string | null;
+  plan_limit_5h_tokens: number | string | null;
+  plan_limit_week_tokens: number | string | null;
+  plan_limit_month_tokens: number | string | null;
 }
 
 let sharedPool: Pool | null = null;
@@ -44,9 +50,11 @@ function toNumber(value: unknown, fallback = 0): number {
 }
 
 function getConnectionString(connectionString?: string): string | null {
-  const env = (globalThis as typeof globalThis & {
-    process?: { env?: Record<string, string | undefined> };
-  }).process?.env;
+  const env = (
+    globalThis as typeof globalThis & {
+      process?: { env?: Record<string, string | undefined> };
+    }
+  ).process?.env;
   return (connectionString || env?.PORTAL_DATABASE_URL || "").trim() || null;
 }
 
@@ -90,6 +98,9 @@ function normalizePlanLimits(row: PlanRow | null): PlanLimits | null {
     requestsPerMinute: Math.max(0, toNumber(row.requests_per_minute, 0)),
     requestsPerDay: Math.max(0, toNumber(row.requests_per_day, 0)),
     requestsPerMonth: Math.max(0, toNumber(row.requests_per_month, 0)),
+    limit5hTokens: Math.max(0, toNumber(row.limit_5h_tokens, 1500000)),
+    limitWeekTokens: Math.max(0, toNumber(row.limit_week_tokens, 5000000)),
+    limitMonthTokens: Math.max(0, toNumber(row.limit_month_tokens, 15000000)),
   };
 }
 
@@ -134,7 +145,10 @@ export async function getUserPlan(
           p.name AS plan_name,
           p.requests_per_minute AS plan_requests_per_minute,
           p.requests_per_day AS plan_requests_per_day,
-          p.requests_per_month AS plan_requests_per_month
+          p.requests_per_month AS plan_requests_per_month,
+          p.limit_5h_tokens AS plan_limit_5h_tokens,
+          p.limit_week_tokens AS plan_limit_week_tokens,
+          p.limit_month_tokens AS plan_limit_month_tokens
         FROM user_api_keys k
         INNER JOIN users u ON u.id = k.user_id
         LEFT JOIN plans p ON p.id = u.plan_id
@@ -148,7 +162,10 @@ export async function getUserPlan(
           p.name AS plan_name,
           p.requests_per_minute AS plan_requests_per_minute,
           p.requests_per_day AS plan_requests_per_day,
-          p.requests_per_month AS plan_requests_per_month
+          p.requests_per_month AS plan_requests_per_month,
+          p.limit_5h_tokens AS plan_limit_5h_tokens,
+          p.limit_week_tokens AS plan_limit_week_tokens,
+          p.limit_month_tokens AS plan_limit_month_tokens
         FROM users u
         LEFT JOIN plans p ON p.id = u.plan_id
         WHERE u.id = $1
@@ -163,6 +180,9 @@ export async function getUserPlan(
       requestsPerMinute: Math.max(0, toNumber(row.plan_requests_per_minute, 0)),
       requestsPerDay: Math.max(0, toNumber(row.plan_requests_per_day, 0)),
       requestsPerMonth: Math.max(0, toNumber(row.plan_requests_per_month, 0)),
+      limit5hTokens: Math.max(0, toNumber(row.plan_limit_5h_tokens, 1500000)),
+      limitWeekTokens: Math.max(0, toNumber(row.plan_limit_week_tokens, 5000000)),
+      limitMonthTokens: Math.max(0, toNumber(row.plan_limit_month_tokens, 15000000)),
     };
 
     return {
@@ -201,7 +221,10 @@ export async function getPlanLimits(
           name,
           requests_per_minute,
           requests_per_day,
-          requests_per_month
+          requests_per_month,
+          limit_5h_tokens,
+          limit_week_tokens,
+          limit_month_tokens
         FROM plans
         WHERE id = $1
         LIMIT 1

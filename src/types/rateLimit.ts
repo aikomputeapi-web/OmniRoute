@@ -6,6 +6,9 @@ export interface PlanLimits {
   requestsPerMinute: number;
   requestsPerDay: number;
   requestsPerMonth: number;
+  limit5hTokens?: number;
+  limitWeekTokens?: number;
+  limitMonthTokens?: number;
 }
 
 export interface UserPlan {
@@ -33,7 +36,10 @@ export interface QuotaInfo {
   source: "redis" | "database" | "fallback";
   minute: QuotaWindowInfo;
   day: QuotaWindowInfo;
+  limit5h?: QuotaWindowInfo;
+  limitWeek?: QuotaWindowInfo;
   month: QuotaWindowInfo;
+  reserveId?: string;
 }
 
 export interface RateLimitResult {
@@ -42,8 +48,11 @@ export interface RateLimitResult {
   reason?:
     | "rate_limit_minute"
     | "rate_limit_day"
+    | "rate_limit_5h"
+    | "rate_limit_week"
     | "rate_limit_month"
     | "unknown_plan"
     | "dependency_unavailable";
   quotaInfo: QuotaInfo;
+  reserveId?: string;
 }

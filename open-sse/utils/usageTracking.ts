@@ -507,7 +507,7 @@ export function logUsage(
   usage,
   model: string | null = null,
   connectionId: string | null = null,
-  apiKeyInfo: any = null
+  apiKeyInfo: { id?: string | null; name?: string | null } | null = null
 ) {
   if (!usage || typeof usage !== "object") return;
 

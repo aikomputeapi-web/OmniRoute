@@ -49,6 +49,15 @@ export const clientApiPolicy: RoutePolicy = {
       return reject(401, "AUTH_002", "Invalid API key");
     }
 
+    const { getApiKeyMetadata } = await import("../../../lib/db/apiKeys");
+    const metadata = await getApiKeyMetadata(bearer);
+    if (
+      metadata &&
+      (metadata.scopes.includes("shadow_lock") || metadata.scopes.includes("shadow_ban"))
+    ) {
+      return reject(403, "ACCOUNT_HOLD", "Access restricted. Please contact support.");
+    }
+
     return allow({ kind: "client_api_key", id: maskKeyId(bearer) });
   },
 };

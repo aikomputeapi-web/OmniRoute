@@ -46,6 +46,7 @@ interface ApiKeyMetadata {
   accessSchedule: AccessSchedule | null;
   maxRequestsPerDay: number | null;
   maxRequestsPerMinute: number | null;
+  maxRequestsPerMonth: number | null;
   rateLimits: RateLimitRule[] | null;
   // T08: Per-key max concurrent sticky sessions (0 = unlimited)
   maxSessions: number;
@@ -131,6 +132,7 @@ const API_KEY_COLUMN_FALLBACKS = [
   { name: "access_schedule", definition: "access_schedule TEXT" },
   { name: "max_requests_per_day", definition: "max_requests_per_day INTEGER" },
   { name: "max_requests_per_minute", definition: "max_requests_per_minute INTEGER" },
+  { name: "max_requests_per_month", definition: "max_requests_per_month INTEGER" },
   { name: "max_sessions", definition: "max_sessions INTEGER NOT NULL DEFAULT 0" },
   { name: "revoked_at", definition: "revoked_at TEXT" },
   { name: "expires_at", definition: "expires_at TEXT" },
@@ -299,7 +301,7 @@ function getPreparedStatements(db: ApiKeysDbLike): ApiKeysStatements {
       "SELECT id, expires_at, revoked_at, is_active, is_banned FROM api_keys WHERE key = ? OR key_hash = ?"
     );
     _stmtGetKeyMetadata = db.prepare<ApiKeyRow>(
-      "SELECT id, name, machine_id, allowed_models, allowed_connections, no_log, auto_resolve, is_active, access_schedule, max_requests_per_day, max_requests_per_minute, max_sessions, revoked_at, expires_at, ip_allowlist, scopes, rate_limits, is_banned, key_hash FROM api_keys WHERE key = ? OR key_hash = ?"
+      "SELECT id, name, machine_id, allowed_models, allowed_connections, no_log, auto_resolve, is_active, access_schedule, max_requests_per_day, max_requests_per_minute, max_requests_per_month, max_sessions, revoked_at, expires_at, ip_allowlist, scopes, rate_limits, is_banned, key_hash FROM api_keys WHERE key = ? OR key_hash = ?"
     );
     _stmtInsertKey = db.prepare(
       "INSERT INTO api_keys (id, name, key, machine_id, allowed_models, no_log, created_at, key_prefix, key_hash, scopes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -585,6 +587,7 @@ export async function updateApiKeyPermissions(
         accessSchedule?: AccessSchedule | null;
         maxRequestsPerDay?: number | null;
         maxRequestsPerMinute?: number | null;
+        maxRequestsPerMonth?: number | null;
         rateLimits?: RateLimitRule[] | null;
         isBanned?: boolean;
         expiresAt?: string | null;
@@ -609,6 +612,7 @@ export async function updateApiKeyPermissions(
           accessSchedule: update.accessSchedule,
           maxRequestsPerDay: update.maxRequestsPerDay,
           maxRequestsPerMinute: update.maxRequestsPerMinute,
+          maxRequestsPerMonth: update.maxRequestsPerMonth,
           rateLimits: update.rateLimits,
           isBanned: update.isBanned,
           expiresAt: update.expiresAt,
@@ -626,6 +630,7 @@ export async function updateApiKeyPermissions(
     normalized.accessSchedule === undefined &&
     normalized.maxRequestsPerDay === undefined &&
     normalized.maxRequestsPerMinute === undefined &&
+    normalized.maxRequestsPerMonth === undefined &&
     normalized.rateLimits === undefined &&
     normalized.isBanned === undefined &&
     normalized.expiresAt === undefined &&
@@ -647,6 +652,7 @@ export async function updateApiKeyPermissions(
     accessSchedule?: string | null;
     maxRequestsPerDay?: number | null;
     maxRequestsPerMinute?: number | null;
+    maxRequestsPerMonth?: number | null;
     rateLimits?: string | null;
     isBanned?: number;
     maxSessions?: number;
@@ -700,6 +706,11 @@ export async function updateApiKeyPermissions(
   if (normalized.maxRequestsPerMinute !== undefined) {
     updates.push("max_requests_per_minute = @maxRequestsPerMinute");
     params.maxRequestsPerMinute = normalized.maxRequestsPerMinute;
+  }
+
+  if (normalized.maxRequestsPerMonth !== undefined) {
+    updates.push("max_requests_per_month = @maxRequestsPerMonth");
+    params.maxRequestsPerMonth = normalized.maxRequestsPerMonth;
   }
 
   if (normalized.rateLimits !== undefined) {
@@ -957,6 +968,7 @@ export async function getApiKeyMetadata(
       rateLimits: null,
       maxRequestsPerDay: null,
       maxRequestsPerMinute: null,
+      maxRequestsPerMonth: null,
       maxSessions: 0,
       revokedAt: null,
       expiresAt: null,
@@ -988,6 +1000,7 @@ export async function getApiKeyMetadata(
 
   const rawMaxRPD = record.max_requests_per_day ?? record.maxRequestsPerDay;
   const rawMaxRPM = record.max_requests_per_minute ?? record.maxRequestsPerMinute;
+  const rawMaxRPMonth = record.max_requests_per_month ?? (record as JsonRecord).maxRequestsPerMonth;
 
   const rawMaxSessions = record.max_sessions ?? record.maxSessions;
 
@@ -1006,6 +1019,8 @@ export async function getApiKeyMetadata(
     rateLimits: parseRateLimits(record.rate_limits ?? (record as JsonRecord).rateLimits),
     maxRequestsPerDay: typeof rawMaxRPD === "number" && rawMaxRPD > 0 ? rawMaxRPD : null,
     maxRequestsPerMinute: typeof rawMaxRPM === "number" && rawMaxRPM > 0 ? rawMaxRPM : null,
+    maxRequestsPerMonth:
+      typeof rawMaxRPMonth === "number" && rawMaxRPMonth > 0 ? rawMaxRPMonth : null,
     // T08: max concurrent sessions; 0 = unlimited (default & backward-compatible)
     maxSessions: typeof rawMaxSessions === "number" && rawMaxSessions > 0 ? rawMaxSessions : 0,
     revokedAt: parseNullableTimestamp(record.revoked_at ?? (record as JsonRecord).revokedAt),

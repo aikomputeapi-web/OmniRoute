@@ -30,7 +30,6 @@ import {
 import { getSyncedCapability } from "@/lib/modelsDevSync";
 import { getModelSpec } from "@/shared/constants/modelSpecs";
 import { isAuthRequired, isDashboardSessionAuthenticated } from "@/shared/utils/apiAuth";
-import { isVisionModelId } from "@/shared/constants/visionModels";
 import { parseModel } from "@omniroute/open-sse/services/model";
 import { getTokenLimit } from "@omniroute/open-sse/services/contextManager";
 import type { ComboModelStep } from "@/lib/combos/steps";
@@ -44,7 +43,6 @@ interface CustomModelEntry {
   inputTokenLimit?: number;
   isHidden?: boolean;
 }
-
 
 const FALLBACK_ALIAS_TO_PROVIDER = {
   ag: "antigravity",
@@ -580,9 +578,46 @@ export async function getUnifiedModelsResponse(
     const models = [];
     const timestamp = Math.floor(Date.now() / 1000);
 
+    // ── Virtual Catalog Mode ────────────────────────────────────────────────
+    // When enabled, virtual catalog combos (tagged __virtual_catalog__) are
+    // exposed as clean root-model entries (e.g. "claude-sonnet-4-6") instead
+    // of being hidden. Provider-prefixed duplicates are removed later.
+    const virtualCatalogEnabled = settings.virtualCatalogEnabled === true;
+    const virtualCatalogBrand =
+      typeof settings.virtualCatalogBrand === "string" && settings.virtualCatalogBrand.trim()
+        ? settings.virtualCatalogBrand.trim()
+        : "aikompute";
+    const virtualCatalogTag = "__virtual_catalog__";
+    const virtualCatalogRootIds = new Set<string>();
+    // ────────────────────────────────────────────────────────────────────────
+
     // Add combos first (they appear at the top) — only active ones
     for (const combo of combos) {
-      if (combo.isActive === false || combo.isHidden === true) continue;
+      if (combo.isActive === false) continue;
+
+      // Virtual catalog combos: emit as clean root-model entries
+      const isVirtualCatalogCombo =
+        Array.isArray(combo.tags) && combo.tags.includes(virtualCatalogTag);
+
+      if (isVirtualCatalogCombo) {
+        if (!virtualCatalogEnabled) continue; // Skip if feature is off
+        const comboMetadata = buildComboCatalogMetadata(combo, combos);
+        virtualCatalogRootIds.add(combo.name);
+        models.push({
+          id: combo.name,
+          object: "model",
+          created: timestamp,
+          owned_by: virtualCatalogBrand,
+          permission: [],
+          root: combo.name,
+          parent: null,
+          ...comboMetadata,
+        });
+        continue;
+      }
+
+      // Regular combos: skip hidden ones as before
+      if (combo.isHidden === true) continue;
       const comboMetadata = buildComboCatalogMetadata(combo, combos);
 
       models.push({
@@ -1120,7 +1155,7 @@ export async function getUnifiedModelsResponse(
     };
 
     const enrichedModels = finalModels.map((model) => {
-      if (model.owned_by === "combo") return model;
+      if (model.owned_by === "combo" || model.owned_by === virtualCatalogBrand) return model;
       const enriched = enrichCatalogModelEntry(model);
       const fallbackContextLength = getDefaultContextFallback(enriched);
       return fallbackContextLength
@@ -1128,10 +1163,46 @@ export async function getUnifiedModelsResponse(
         : enriched;
     });
 
+    // ── Virtual Catalog Deduplication ──────────────────────────────────────
+    // When virtual catalog is active, remove provider-prefixed model entries
+    // whose root model ID is already covered by a virtual catalog entry.
+    // This ensures customers see "claude-sonnet-4-6" once, not
+    // "kr/claude-sonnet-4-6", "gh/claude-sonnet-4-6", etc.
+    let outputModels = enrichedModels;
+    if (virtualCatalogEnabled && virtualCatalogRootIds.size > 0) {
+      // Helper: sanitize a model ID the same way the generator does
+      // (slashes → hyphens, strip special chars) to match combo names
+      const sanitize = (id: string) =>
+        id
+          .replace(/\//g, "-")
+          .replace(/[^a-zA-Z0-9._-]/g, "-")
+          .replace(/-{2,}/g, "-")
+          .replace(/^-+|-+$/g, "");
+
+      outputModels = enrichedModels.filter((model) => {
+        // Always keep virtual catalog entries
+        if (model.owned_by === virtualCatalogBrand) return true;
+        // For provider models: check if the root ID is covered by virtual catalog
+        const rootId = model.root || model.id;
+        if (virtualCatalogRootIds.has(rootId)) return false;
+        // Check sanitized form (handles models with slashes like "deepseek/deepseek-v4-pro")
+        if (virtualCatalogRootIds.has(sanitize(rootId))) return false;
+        // Also check if model.id itself is "alias/rootId" where rootId is virtual
+        const slashIdx = typeof model.id === "string" ? model.id.indexOf("/") : -1;
+        if (slashIdx > 0) {
+          const unprefixedId = model.id.slice(slashIdx + 1);
+          if (virtualCatalogRootIds.has(unprefixedId)) return false;
+          if (virtualCatalogRootIds.has(sanitize(unprefixedId))) return false;
+        }
+        return true;
+      });
+    }
+    // ──────────────────────────────────────────────────────────────────────
+
     return Response.json(
       {
         object: "list",
-        data: enrichedModels,
+        data: outputModels,
       },
       {
         headers: {

@@ -1731,7 +1731,10 @@ export async function getUserPlanForApiKey(apiKeyId: string): Promise<UserPlan |
     userPlanCache.set(normalizedApiKeyId, { value: userPlan, timestamp: Date.now() });
     return userPlan;
   } catch (error) {
-    log.error({ err: error, apiKeyId: normalizedApiKeyId }, "Failed to resolve user plan for API key");
+    log.error("AUTH", "Failed to resolve user plan for API key", {
+      err: error,
+      apiKeyId: normalizedApiKeyId,
+    });
     userPlanCache.set(normalizedApiKeyId, { value: null, timestamp: Date.now() });
     return null;
   }
