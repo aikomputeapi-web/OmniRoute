@@ -17,6 +17,7 @@ Object.assign(process.env, {
 const providersModule = await import("../../src/lib/oauth/providers/index.ts");
 const oauthModule = await import("../../src/lib/oauth/constants/oauth.ts");
 const registryModule = await import("../../open-sse/config/providerRegistry.ts");
+const antigravityHeadersModule = await import("../../open-sse/services/antigravityHeaders.ts");
 
 const PROVIDERS = providersModule.default;
 const {
@@ -35,9 +36,11 @@ const {
   PROVIDERS: OAUTH_PROVIDER_IDS,
   QODER_CONFIG,
   QWEN_CONFIG,
+  TRAE_CONFIG,
   WINDSURF_CONFIG,
 } = oauthModule;
 const { REGISTRY } = registryModule;
+const { getAntigravityLoadCodeAssistMetadata } = antigravityHeadersModule;
 
 const originalFetch = globalThis.fetch;
 
@@ -54,6 +57,7 @@ const EXPECTED_PROVIDER_KEYS = [
   "kiro",
   "amazon-q",
   "cursor",
+  "trae",
   "kilocode",
   "cline",
   "windsurf",
@@ -77,6 +81,7 @@ const EXPECTED_CONFIG_BY_PROVIDER = {
   cline: CLINE_CONFIG,
   windsurf: WINDSURF_CONFIG,
   "devin-cli": WINDSURF_CONFIG,
+  trae: TRAE_CONFIG,
 };
 
 const REQUIRED_FIELDS_BY_PROVIDER = {
@@ -123,6 +128,7 @@ const REQUIRED_FIELDS_BY_PROVIDER = {
   cline: ["appBaseUrl", "apiBaseUrl", "authorizeUrl", "tokenExchangeUrl", "refreshUrl"],
   windsurf: ["authorizeUrl", "apiServerUrl", "exchangePath", "inferenceUrl"],
   "devin-cli": ["authorizeUrl", "apiServerUrl", "exchangePath", "inferenceUrl"],
+  trae: ["apiEndpoint", "chatEndpoint", "webUrl"],
 };
 
 function getByPath(object, path) {
@@ -323,6 +329,8 @@ test("device and import-token providers expose the flow-specific fields expected
   assert.equal(PROVIDERS.cursor.flowType, "import_token");
   assert.equal(CURSOR_CONFIG.dbKeys.accessToken, "cursorAuth/accessToken");
   assert.equal(CURSOR_CONFIG.dbKeys.machineId, "storage.serviceMachineId");
+  assert.equal(PROVIDERS.trae.flowType, "import_token");
+  assert.equal(typeof TRAE_CONFIG.apiEndpoint, "string");
   assert.ok(Array.isArray(KIRO_CONFIG.authMethods));
   assert.ok(KIRO_CONFIG.authMethods.includes("builder-id"));
 });
@@ -432,24 +440,32 @@ test("Gemini and Antigravity run mocked browser OAuth exchanges and post-exchang
     jsonResponse({ cloudaicompanionProject: { id: "gemini-project" } }),
     jsonResponse({ access_token: "anti-access", refresh_token: "anti-refresh", expires_in: 7200 }),
     jsonResponse({ email: "anti@example.com" }),
-    (_url, init = {}) => {
+    (_url, init: any = {}) => {
       assert.equal(init.method, "POST");
       assert.equal(init.headers.Authorization, "Bearer anti-access");
       assert.match(init.headers["User-Agent"], /^vscode\/1\.X\.X \(Antigravity\//);
       assert.equal(init.headers["X-Goog-Api-Client"], undefined);
-      assert.equal(init.headers["Client-Metadata"], undefined);
-      assert.deepEqual(JSON.parse(String(init.body)).metadata, { ideType: "ANTIGRAVITY" });
+      assert.deepEqual(
+        JSON.parse(String(init.body)).metadata,
+        getAntigravityLoadCodeAssistMetadata()
+      );
+      assert.equal(JSON.parse(String(init.body)).cloudaicompanionProject, undefined);
       return jsonResponse({
         cloudaicompanionProject: { id: "anti-project" },
         allowedTiers: [{ id: "tier-default", isDefault: true }],
       });
     },
-    (_url, init = {}) => {
+    (_url, init: any = {}) => {
       assert.equal(init.method, "POST");
       assert.equal(init.headers.Authorization, "Bearer anti-access");
       assert.match(init.headers["User-Agent"], /^vscode\/1\.X\.X \(Antigravity\//);
       assert.equal(init.headers["X-Goog-Api-Client"], undefined);
-      assert.deepEqual(JSON.parse(String(init.body)).metadata, { ideType: "ANTIGRAVITY" });
+      assert.deepEqual(
+        JSON.parse(String(init.body)).metadata,
+        getAntigravityLoadCodeAssistMetadata()
+      );
+      assert.equal(JSON.parse(String(init.body)).tier_id, "tier-default");
+      assert.equal(JSON.parse(String(init.body)).cloudaicompanionProject, undefined);
       return jsonResponse({
         done: true,
         response: { cloudaicompanionProject: { id: "anti-project-final" } },

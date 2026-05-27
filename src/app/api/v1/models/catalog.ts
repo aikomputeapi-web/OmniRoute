@@ -18,7 +18,7 @@ import { getAllMusicModels } from "@omniroute/open-sse/config/musicRegistry";
 import { REGISTRY } from "@omniroute/open-sse/config/providerRegistry";
 import { CODEX_NATIVE_UNPREFIXED_MODELS } from "@omniroute/open-sse/services/model";
 import { resolveNestedComboTargets } from "@omniroute/open-sse/services/combo";
-import { getAllSyncedAvailableModels } from "@/lib/db/models";
+import { getAllSyncedAvailableModels, type SyncedAvailableModel } from "@/lib/db/models";
 import { getCompatibleFallbackModels } from "@/lib/providers/managedAvailableModels";
 import { hasEligibleConnectionForModel } from "@/domain/connectionModelRules";
 import {
@@ -126,8 +126,8 @@ const VISION_MODEL_KEYWORDS = [
   "glm-4.5v",
   "vision",
   "multimodal",
+  "kimi",
 ];
-
 function isVisionModelId(modelId: string): boolean {
   const normalized = String(modelId || "").toLowerCase();
   if (!normalized) return false;
@@ -517,7 +517,7 @@ export async function getUnifiedModelsResponse(
         : undefined;
 
       const baseMetadata = explicitContextLength ? { context_length: explicitContextLength } : {};
-      const targets = resolveNestedComboTargets(combo, allCombos) as ComboCatalogTarget[];
+      const targets = resolveNestedComboTargets(combo as any, allCombos) as ComboCatalogTarget[];
       if (targets.length === 0) return baseMetadata;
 
       const targetMetadata = targets.map((target) => getComboTargetCatalogMetadata(target));
@@ -594,6 +594,7 @@ export async function getUnifiedModelsResponse(
     // Add combos first (they appear at the top) — only active ones
     for (const combo of combos) {
       if (combo.isActive === false) continue;
+      if (typeof combo.name !== "string" || combo.name.length === 0) continue;
 
       // Virtual catalog combos: emit as clean root-model entries
       const isVirtualCatalogCombo =
@@ -632,6 +633,22 @@ export async function getUnifiedModelsResponse(
       });
     }
 
+    // Resolve synced available models (from auto-sync) — used to skip static
+    // PROVIDER_MODELS entries for providers that have a live, API-fresh list.
+    let syncedModelsByProvider: Record<string, SyncedAvailableModel[]> = {};
+    try {
+      syncedModelsByProvider = await getAllSyncedAvailableModels();
+    } catch (e) {
+      // DB unavailable — log and fall through; static models remain as defaults.
+      console.log("[catalog] Could not fetch synced available models:", e);
+    }
+    const providersWithSyncedModels = new Set(
+      Object.keys(syncedModelsByProvider).filter((pid) => {
+        const models = syncedModelsByProvider[pid];
+        return Array.isArray(models) && models.length > 0;
+      })
+    );
+
     // Add provider models (chat)
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = aliasToProviderId[alias] || alias;
@@ -644,6 +661,10 @@ export async function getUnifiedModelsResponse(
       if (!activeAliases.has(alias) && !activeAliases.has(canonicalProviderId)) {
         continue;
       }
+
+      // Skip static models for providers that have synced available models
+      // (auto-sync provides the authoritative, up-to-date list from the API).
+      if (providersWithSyncedModels.has(canonicalProviderId)) continue;
 
       for (const model of providerModels) {
         if (!providerSupportsModel(canonicalProviderId, model.id)) continue;
@@ -712,7 +733,8 @@ export async function getUnifiedModelsResponse(
     }
 
     try {
-      const syncedModelsByProvider = await getAllSyncedAvailableModels();
+      // Data already loaded above into syncedModelsByProvider; the try block
+      // here protects the for-loop / model processing from unexpected errors.
       for (const [providerId, syncedModels] of Object.entries(syncedModelsByProvider)) {
         if (!Array.isArray(syncedModels) || syncedModels.length === 0) continue;
         if (blockedProviders.has(providerId)) continue;
@@ -736,7 +758,15 @@ export async function getUnifiedModelsResponse(
           if (!providerSupportsModel(canonicalProviderId, sm.id)) continue;
           if (getModelIsHidden(providerId, sm.id)) continue;
 
-          const aliasId = `${alias}/${sm.id}`;
+          // Strip modelIdPrefix (e.g. "accounts/fireworks/models/") from display ID
+          // so synced model IDs match the short IDs from static registry.
+          const registryEntry = REGISTRY[providerId];
+          const displayModelId =
+            registryEntry?.modelIdPrefix && sm.id.startsWith(registryEntry.modelIdPrefix)
+              ? sm.id.slice(registryEntry.modelIdPrefix.length)
+              : sm.id;
+
+          const aliasId = `${alias}/${displayModelId}`;
           const endpoints = Array.isArray(sm.supportedEndpoints) ? sm.supportedEndpoints : ["chat"];
           const apiFormat = typeof sm.apiFormat === "string" ? sm.apiFormat : "chat-completions";
           let modelType: string | undefined;
@@ -749,6 +779,9 @@ export async function getUnifiedModelsResponse(
             ...(apiFormat !== "chat-completions" ? { api_format: apiFormat } : {}),
             ...(modelType === "audio" ? { subtype: "transcription" } : {}),
             ...(sm.inputTokenLimit ? { context_length: sm.inputTokenLimit } : {}),
+            ...(typeof sm.outputTokenLimit === "number"
+              ? { max_output_tokens: sm.outputTokenLimit }
+              : {}),
             ...(endpoints.length > 1 || !endpoints.includes("chat")
               ? { supported_endpoints: endpoints }
               : {}),
@@ -783,6 +816,9 @@ export async function getUnifiedModelsResponse(
               type: "audio",
               subtype: "speech",
               ...(sm.inputTokenLimit ? { context_length: sm.inputTokenLimit } : {}),
+              ...(typeof sm.outputTokenLimit === "number"
+                ? { max_output_tokens: sm.outputTokenLimit }
+                : {}),
               ...(endpoints.length > 1 || !endpoints.includes("chat")
                 ? { supported_endpoints: endpoints }
                 : {}),
@@ -790,7 +826,7 @@ export async function getUnifiedModelsResponse(
           }
 
           if (canonicalProviderId !== alias && !prefix) {
-            const providerPrefixedId = `${canonicalProviderId}/${sm.id}`;
+            const providerPrefixedId = `${canonicalProviderId}/${displayModelId}`;
             if (!models.some((model) => model.id === providerPrefixedId)) {
               models.push({
                 id: providerPrefixedId,
@@ -1043,6 +1079,9 @@ export async function getUnifiedModelsResponse(
             ...(typeof model.inputTokenLimit === "number"
               ? { context_length: model.inputTokenLimit }
               : {}),
+            ...(typeof (model as any).outputTokenLimit === "number"
+              ? { max_output_tokens: (model as any).outputTokenLimit }
+              : {}),
             ...(visionFields || {}),
           });
 
@@ -1067,6 +1106,9 @@ export async function getUnifiedModelsResponse(
               ...(modelType ? { type: modelType } : {}),
               ...(typeof model.inputTokenLimit === "number"
                 ? { context_length: model.inputTokenLimit }
+                : {}),
+              ...(typeof (model as any).outputTokenLimit === "number"
+                ? { max_output_tokens: (model as any).outputTokenLimit }
                 : {}),
               ...(providerVisionFields || {}),
             });

@@ -31,8 +31,11 @@ function recordOrEmpty(value: unknown): JsonRecord {
     try {
       const parsed: unknown = JSON.parse(value);
       if (isRecord(parsed)) return parsed;
-    } catch {
-      // Tool argument fragments may be incomplete in streamed deltas.
+    } catch (error) {
+      console.warn(
+        "[commandCode] tool arg parse failed:",
+        error instanceof Error ? error.message : String(error)
+      );
     }
   }
   return {};
@@ -142,7 +145,7 @@ function clampMaxTokens(value: unknown): number {
   return Math.max(1, Math.min(Math.floor(numeric), MAX_COMMAND_CODE_TOKENS));
 }
 
-function buildCommandCodeBody(model: string, body: unknown): JsonRecord {
+function buildCommandCodeBody(model: string, body: unknown, stream = false): JsonRecord {
   const input = isRecord(body) ? body : {};
   const converted = convertMessages(input.messages);
   const explicitSystem = typeof input.system === "string" ? input.system : "";
@@ -162,6 +165,7 @@ function buildCommandCodeBody(model: string, body: unknown): JsonRecord {
     },
     memory: "",
     taste: "",
+    skills: "",
     permissionMode: "standard",
     params: {
       model,
@@ -169,7 +173,7 @@ function buildCommandCodeBody(model: string, body: unknown): JsonRecord {
       tools: convertTools(input.tools),
       system,
       max_tokens: clampMaxTokens(input.max_tokens ?? input.max_completion_tokens),
-      stream: false,
+      stream: true,
     },
   };
 }
@@ -182,7 +186,11 @@ function parseStreamLine(line: string): unknown | undefined {
 
   try {
     return JSON.parse(trimmed);
-  } catch {
+  } catch (error) {
+    console.warn(
+      "[commandCode] stream line parse failed:",
+      error instanceof Error ? error.message : String(error)
+    );
     return undefined;
   }
 }
@@ -397,8 +405,11 @@ function createStreamResponse(
           signal?.removeEventListener("abort", abort);
           try {
             reader.releaseLock();
-          } catch {
-            // Reader may already be released/cancelled.
+          } catch (error) {
+            console.warn(
+              "[commandCode] reader releaseLock failed:",
+              error instanceof Error ? error.message : String(error)
+            );
           }
         }
       };
@@ -456,13 +467,19 @@ async function createJsonResponse(
   } finally {
     try {
       await reader.cancel();
-    } catch {
-      // Reader may already be closed.
+    } catch (error) {
+      console.warn(
+        "[commandCode] reader cancel failed:",
+        error instanceof Error ? error.message : String(error)
+      );
     }
     try {
       reader.releaseLock();
-    } catch {
-      // Reader may already be released.
+    } catch (error) {
+      console.warn(
+        "[commandCode] reader releaseLock failed:",
+        error instanceof Error ? error.message : String(error)
+      );
     }
   }
 
@@ -512,7 +529,7 @@ export class CommandCodeExecutor extends BaseExecutor {
     };
     mergeUpstreamExtraHeaders(headers, upstreamExtraHeaders);
 
-    const transformedBody = buildCommandCodeBody(model, body);
+    const transformedBody = buildCommandCodeBody(model, body, stream);
     const url = this.buildUrl();
     const upstream = await fetch(url, {
       method: "POST",
@@ -522,7 +539,10 @@ export class CommandCodeExecutor extends BaseExecutor {
     });
 
     if (!upstream.ok) {
-      const errorText = await upstream.text().catch(() => "");
+      const errorText = await upstream.text().catch(() => {
+        console.warn("[commandCode] upstream text failed");
+        return "";
+      });
       return {
         response: new Response(errorText || `Command Code API error ${upstream.status}`, {
           status: upstream.status,

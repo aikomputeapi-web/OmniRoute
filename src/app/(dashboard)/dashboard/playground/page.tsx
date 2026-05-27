@@ -8,8 +8,8 @@ import { isVisionModelId } from "@/shared/constants/visionModels";
 import { pickMaskedDisplayValue, pickDisplayValue } from "@/shared/utils/maskEmail";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import dynamic from "next/dynamic";
+import Editor from "@/shared/components/MonacoEditor";
 
-const Editor = dynamic(() => import("@monaco-editor/react"), { ssr: false });
 const SearchPlayground = dynamic(() => import("./SearchPlayground"), {
   ssr: false,
 });
@@ -112,6 +112,7 @@ const ENDPOINT_PATHS: Record<string, string> = {
   search: "/v1/search",
 };
 
+
 /** Convert a File to base64 data URI */
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -208,7 +209,7 @@ export default function PlaygroundPage() {
   const isTranscriptionEndpoint = selectedEndpoint === "transcription";
   const isChatEndpoint = selectedEndpoint === "chat";
   const isImageEndpoint = selectedEndpoint === "images";
-  const supportsVision = isChatEndpoint && isVisionModel(selectedModel);
+  const supportsVision = isChatEndpoint && isVisionModelId(selectedModel);
 
   useEffect(() => {
     return () => {
@@ -236,6 +237,7 @@ export default function PlaygroundPage() {
 
         const providerSet = new Set<string>();
         modelList.forEach((m) => {
+          if (typeof m?.id !== "string") return;
           const parts = m.id.split("/");
           if (parts.length >= 2) providerSet.add(parts[0]);
         });
@@ -247,7 +249,9 @@ export default function PlaygroundPage() {
           setSelectedProvider(providerOpts[0].value);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.error("[playground] Failed to load models:", err);
+      });
 
     // Fetch ALL connections (once)
     fetch("/api/providers/client")
@@ -268,9 +272,18 @@ export default function PlaygroundPage() {
       .catch(() => {});
   }, []);
 
-  const filteredModels = models
-    .filter((m) => !selectedProvider || m.id.startsWith(selectedProvider + "/"))
-    .map((m) => ({ value: m.id, label: m.id }));
+  const filteredModels = (() => {
+    const seen = new Set<string>();
+    const out: Array<{ value: string; label: string }> = [];
+    for (const m of models) {
+      if (typeof m?.id !== "string") continue;
+      if (selectedProvider && !m.id.startsWith(selectedProvider + "/")) continue;
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push({ value: m.id, label: m.id });
+    }
+    return out;
+  })();
 
   const generateDefaultBody = (endpoint: string, model: string) => {
     const template = { ...DEFAULT_BODIES[endpoint] };
@@ -284,7 +297,9 @@ export default function PlaygroundPage() {
     setSelectedProvider(newProvider);
     setSelectedConnection("");
     const providerModels = models
-      .filter((m) => !newProvider || m.id.startsWith(newProvider + "/"))
+      .filter(
+        (m) => typeof m?.id === "string" && (!newProvider || m.id.startsWith(newProvider + "/"))
+      )
       .map((m) => m.id);
     const firstModel = providerModels[0] || "";
     setSelectedModel(firstModel);

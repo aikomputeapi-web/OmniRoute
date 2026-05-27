@@ -62,16 +62,17 @@ function SectionDescription({
   trigger: string;
   effect: string;
 }) {
+  const t = useTranslations("settings");
   return (
     <div className="grid grid-cols-1 gap-2 text-xs text-text-muted sm:grid-cols-3">
       <div>
-        <span className="font-semibold text-text-main">Escopo:</span> {scope}
+        <span className="font-semibold text-text-main">{t("scopeLabel")}:</span> {scope}
       </div>
       <div>
-        <span className="font-semibold text-text-main">Gatilho:</span> {trigger}
+        <span className="font-semibold text-text-main">{t("triggerLabel")}:</span> {trigger}
       </div>
       <div>
-        <span className="font-semibold text-text-main">Efeito:</span> {effect}
+        <span className="font-semibold text-text-main">{t("effectLabel")}:</span> {effect}
       </div>
     </div>
   );
@@ -203,6 +204,7 @@ function RequestQueueCard({
   onSave: (next: RequestQueueSettings) => Promise<void>;
   saving: boolean;
 }) {
+  const t = useTranslations("settings");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
@@ -216,12 +218,12 @@ function RequestQueueCard({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-xl text-primary">speed</span>
-            <h2 className="text-lg font-bold">Fila de Requisições e Ritmo</h2>
+            <h2 className="text-lg font-bold">{t("resilienceRequestQueueTitle")}</h2>
           </div>
           <SectionDescription
-            scope="Por fila de requisição"
-            trigger="Antes de enviar para o upstream"
-            effect="Enfileira requisições, limita concorrência e espaça as chamadas"
+            scope={t("resilienceRequestQueueScope")}
+            trigger={t("resilienceRequestQueueTrigger")}
+            effect={t("resilienceRequestQueueEffect")}
           />
         </div>
         <ActionRow
@@ -239,30 +241,27 @@ function RequestQueueCard({
         />
       </div>
 
-      <p className="mb-4 text-sm text-text-muted">
-        Esta camada controla apenas enfileiramento e ritmo. Ela não grava cooldown nem abre circuit
-        breaker.
-      </p>
+      <p className="mb-4 text-sm text-text-muted">{t("resilienceRequestQueueDesc")}</p>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {editing ? (
           <>
             <BooleanField
-              label="Autoativar para provedores com API key"
-              description="Ativa proteção de fila por padrão para conexões de API key ativas."
+              label={t("resilienceAutoEnableApiKeyProviders")}
+              description={t("resilienceAutoEnableApiKeyProvidersDesc")}
               checked={draft.autoEnableApiKeyProviders}
               onChange={(autoEnableApiKeyProviders) =>
                 setDraft((prev) => ({ ...prev, autoEnableApiKeyProviders }))
               }
             />
             <NumberField
-              label="Requisições por minuto"
+              label={t("resilienceRequestsPerMinute")}
               value={draft.requestsPerMinute}
               min={1}
               onChange={(requestsPerMinute) => setDraft((prev) => ({ ...prev, requestsPerMinute }))}
             />
             <NumberField
-              label="Tempo mínimo entre requisições"
+              label={t("resilienceMinTimeBetweenRequests")}
               value={draft.minTimeBetweenRequestsMs}
               suffix="ms"
               onChange={(minTimeBetweenRequestsMs) =>
@@ -270,7 +269,7 @@ function RequestQueueCard({
               }
             />
             <NumberField
-              label="Requisições concorrentes"
+              label={t("resilienceConcurrentRequests")}
               value={draft.concurrentRequests}
               min={1}
               onChange={(concurrentRequests) =>
@@ -278,7 +277,7 @@ function RequestQueueCard({
               }
             />
             <NumberField
-              label="Tempo máximo de espera em fila"
+              label={t("resilienceMaxQueueWait")}
               value={draft.maxWaitMs}
               min={1}
               suffix="ms"
@@ -288,31 +287,33 @@ function RequestQueueCard({
         ) : (
           <>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Autoativar para provedores com API key</div>
+              <div className="text-xs text-text-muted">
+                {t("resilienceAutoEnableApiKeyProviders")}
+              </div>
               <div className="mt-1 text-sm font-semibold text-text-main">
-                {value.autoEnableApiKeyProviders ? "Ativado" : "Desativado"}
+                {value.autoEnableApiKeyProviders ? t("statusEnabled") : t("statusDisabled")}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Requisições por minuto</div>
+              <div className="text-xs text-text-muted">{t("resilienceRequestsPerMinute")}</div>
               <div className="mt-1 text-sm font-semibold text-text-main">
                 {value.requestsPerMinute}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Tempo mínimo entre requisições</div>
+              <div className="text-xs text-text-muted">{t("resilienceMinTimeBetweenRequests")}</div>
               <div className="mt-1 text-sm font-semibold text-text-main">
                 {formatMs(value.minTimeBetweenRequestsMs)}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Requisições concorrentes</div>
+              <div className="text-xs text-text-muted">{t("resilienceConcurrentRequests")}</div>
               <div className="mt-1 text-sm font-semibold text-text-main">
                 {value.concurrentRequests}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Tempo máximo de espera em fila</div>
+              <div className="text-xs text-text-muted">{t("resilienceMaxQueueWait")}</div>
               <div className="mt-1 text-sm font-semibold text-text-main">
                 {formatMs(value.maxWaitMs)}
               </div>
@@ -333,6 +334,7 @@ function ConnectionCooldownCard({
   onSave: (next: ResilienceResponse["connectionCooldown"]) => Promise<void>;
   saving: boolean;
 }) {
+  const t = useTranslations("settings");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
@@ -347,7 +349,7 @@ function ConnectionCooldownCard({
         {editing ? (
           <>
             <NumberField
-              label="Cooldown base"
+              label={t("resilienceBaseCooldown")}
               value={current.baseCooldownMs}
               min={0}
               suffix="ms"
@@ -356,8 +358,8 @@ function ConnectionCooldownCard({
               }
             />
             <BooleanField
-              label="Use upstream retry hints"
-              description="Usa valores de retry-after/reset do upstream quando disponíveis."
+              label={t("resilienceUseUpstreamRetryHints")}
+              description={t("resilienceUseUpstreamRetryHintsDesc")}
               checked={current.useUpstreamRetryHints}
               onChange={(useUpstreamRetryHints) =>
                 setDraft((prev) => ({
@@ -368,7 +370,7 @@ function ConnectionCooldownCard({
             />
             <div className="flex flex-col gap-1">
               <label className="flex items-center justify-between gap-2 text-sm">
-                <span className="text-text-muted">Use upstream 429 hints for breaker cooldown</span>
+                <span className="text-text-muted">{t("resilienceUseUpstream429BreakerHints")}</span>
                 <select
                   className="rounded border border-border-default bg-surface-1 px-2 py-1 text-sm font-mono"
                   value={
@@ -396,20 +398,17 @@ function ConnectionCooldownCard({
                     });
                   }}
                 >
-                  <option value="default">Default (per provider)</option>
-                  <option value="on">Always on</option>
-                  <option value="off">Always off</option>
+                  <option value="default">{t("resilienceDefaultPerProvider")}</option>
+                  <option value="on">{t("resilienceAlwaysOn")}</option>
+                  <option value="off">{t("resilienceAlwaysOff")}</option>
                 </select>
               </label>
               <p className="text-xs text-text-muted">
-                Apply Retry-After / quota-exhausted signals from 429 responses to circuit-breaker
-                cooldown duration. Default uses a per-provider policy: direct cloud providers
-                default on; reverse-proxy / self-hosted / CLI-backed providers default off.
-                Independent of &quot;Use upstream retry hints&quot;.
+                {t("resilienceUseUpstream429BreakerHintsDesc")}
               </p>
             </div>
             <NumberField
-              label="Máximo de passos de backoff"
+              label={t("resilienceMaxBackoffSteps")}
               value={current.maxBackoffSteps}
               min={0}
               onChange={(maxBackoffSteps) =>
@@ -420,27 +419,29 @@ function ConnectionCooldownCard({
         ) : (
           <>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-text-muted">Cooldown base</span>
+              <span className="text-text-muted">{t("resilienceBaseCooldown")}</span>
               <span className="font-mono text-text-main">{formatMs(current.baseCooldownMs)}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-text-muted">Usar dicas de retry do upstream</span>
+              <span className="text-text-muted">{t("resilienceUseUpstreamRetryHints")}</span>
               <span className="font-mono text-text-main">
-                {current.useUpstreamRetryHints ? "Sim" : "Não"}
+                {current.useUpstreamRetryHints ? t("yes") : t("no")}
               </span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-text-muted">Use upstream 429 hints (breaker)</span>
+              <span className="text-text-muted">
+                {t("resilienceUseUpstream429BreakerHintsShort")}
+              </span>
               <span className="font-mono text-text-main">
                 {current.useUpstream429BreakerHints === true
-                  ? "Yes"
+                  ? t("yes")
                   : current.useUpstream429BreakerHints === false
-                    ? "No"
-                    : "Default"}
+                    ? t("no")
+                    : t("resilienceDefault")}
               </span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-text-muted">Máximo de passos de backoff</span>
+              <span className="text-text-muted">{t("resilienceMaxBackoffSteps")}</span>
               <span className="font-mono text-text-main">{current.maxBackoffSteps}</span>
             </div>
           </>
@@ -455,12 +456,12 @@ function ConnectionCooldownCard({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-xl text-primary">timer_off</span>
-            <h2 className="text-lg font-bold">Cooldown de Conexão</h2>
+            <h2 className="text-lg font-bold">{t("resilienceConnectionCooldownTitle")}</h2>
           </div>
           <SectionDescription
-            scope="Conexão individual"
-            trigger="Quando uma conexão retorna falha transitória no upstream"
-            effect="Pula temporariamente essa conexão e aumenta backoff em falhas repetidas"
+            scope={t("resilienceConnectionCooldownScope")}
+            trigger={t("resilienceConnectionCooldownTrigger")}
+            effect={t("resilienceConnectionCooldownEffect")}
           />
         </div>
         <ActionRow
@@ -497,14 +498,11 @@ function ConnectionCooldownCard({
         />
       </div>
 
-      <p className="mb-4 text-sm text-text-muted">
-        O cooldown base cobre falhas transitórias de conexão. Quando as dicas de retry do upstream
-        estão ativas, a janela explícita do provedor sobrescreve o cooldown local.
-      </p>
+      <p className="mb-4 text-sm text-text-muted">{t("resilienceConnectionCooldownDesc")}</p>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {renderProfile("oauth", "Provedores OAuth", "lock")}
-        {renderProfile("apikey", "Provedores API Key", "key")}
+        {renderProfile("oauth", "OAuth Providers", "lock")}
+        {renderProfile("apikey", "API Key Providers", "key")}
       </div>
     </Card>
   );
@@ -519,6 +517,7 @@ function ProviderBreakerCard({
   onSave: (next: ResilienceResponse["providerBreaker"]) => Promise<void>;
   saving: boolean;
 }) {
+  const t = useTranslations("settings");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
@@ -533,7 +532,7 @@ function ProviderBreakerCard({
         {editing ? (
           <>
             <NumberField
-              label="Limite de falhas"
+              label={t("resilienceFailureThreshold")}
               value={current.failureThreshold}
               min={1}
               onChange={(failureThreshold) =>
@@ -541,7 +540,7 @@ function ProviderBreakerCard({
               }
             />
             <NumberField
-              label="Tempo para reset"
+              label={t("resilienceResetTime")}
               value={current.resetTimeoutMs}
               min={1000}
               suffix="ms"
@@ -553,11 +552,11 @@ function ProviderBreakerCard({
         ) : (
           <>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-text-muted">Limite de falhas</span>
+              <span className="text-text-muted">{t("resilienceFailureThreshold")}</span>
               <span className="font-mono text-text-main">{current.failureThreshold}</span>
             </div>
             <div className="flex items-center justify-between text-sm">
-              <span className="text-text-muted">Tempo para reset</span>
+              <span className="text-text-muted">{t("resilienceResetTime")}</span>
               <span className="font-mono text-text-main">{formatMs(current.resetTimeoutMs)}</span>
             </div>
           </>
@@ -574,12 +573,12 @@ function ProviderBreakerCard({
             <span className="material-symbols-outlined text-xl text-primary">
               electrical_services
             </span>
-            <h2 className="text-lg font-bold">Circuit Breaker por Provedor</h2>
+            <h2 className="text-lg font-bold">{t("resilienceProviderBreakerTitle")}</h2>
           </div>
           <SectionDescription
-            scope="Provedor inteiro"
-            trigger="Falhas finais de transporte/servidor após esgotar fallback de conexão"
-            effect="Bloqueia temporariamente esse provedor até o tempo de reset expirar"
+            scope={t("resilienceProviderBreakerScope")}
+            trigger={t("resilienceProviderBreakerTrigger")}
+            effect={t("resilienceProviderBreakerEffect")}
           />
         </div>
         <ActionRow
@@ -597,14 +596,11 @@ function ProviderBreakerCard({
         />
       </div>
 
-      <p className="mb-4 text-sm text-text-muted">
-        O estado em tempo real do breaker aparece apenas na página Saúde. Rate limits 429 no escopo
-        de conexão ficam no Cooldown de Conexão e não disparam o breaker de provedor.
-      </p>
+      <p className="mb-4 text-sm text-text-muted">{t("resilienceProviderBreakerDesc")}</p>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        {renderProfile("oauth", "Provedores OAuth", "lock")}
-        {renderProfile("apikey", "Provedores API Key", "key")}
+        {renderProfile("oauth", "OAuth Providers", "lock")}
+        {renderProfile("apikey", "API Key Providers", "key")}
       </div>
     </Card>
   );
@@ -619,6 +615,7 @@ function WaitForCooldownCard({
   onSave: (next: WaitForCooldownSettings) => Promise<void>;
   saving: boolean;
 }) {
+  const t = useTranslations("settings");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
 
@@ -632,12 +629,12 @@ function WaitForCooldownCard({
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <span className="material-symbols-outlined text-xl text-primary">hourglass_top</span>
-            <h2 className="text-lg font-bold">Aguardar Cooldown</h2>
+            <h2 className="text-lg font-bold">{t("resilienceWaitForCooldownTitle")}</h2>
           </div>
           <SectionDescription
-            scope="Requisição atual do cliente"
-            trigger="Quando todas as conexões candidatas já estão em cooldown"
-            effect="Aguarda no servidor e tenta novamente quando o primeiro cooldown expira"
+            scope={t("resilienceWaitForCooldownScope")}
+            trigger={t("resilienceWaitForCooldownTrigger")}
+            effect={t("resilienceWaitForCooldownEffect")}
           />
         </div>
         <ActionRow
@@ -655,27 +652,25 @@ function WaitForCooldownCard({
         />
       </div>
 
-      <p className="mb-4 text-sm text-text-muted">
-        Isso afeta apenas a requisição atual. Não grava estado de conexão nem de provedor.
-      </p>
+      <p className="mb-4 text-sm text-text-muted">{t("resilienceWaitForCooldownDesc")}</p>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {editing ? (
           <>
             <BooleanField
-              label="Ativar espera no servidor"
-              description="Quando ativo, o OmniRoute aguarda o primeiro cooldown expirar e tenta novamente automaticamente."
+              label={t("resilienceEnableServerWait")}
+              description={t("resilienceEnableServerWaitDesc")}
               checked={draft.enabled}
               onChange={(enabled) => setDraft((prev) => ({ ...prev, enabled }))}
             />
             <NumberField
-              label="Máximo de tentativas"
+              label={t("resilienceMaxAttempts")}
               value={draft.maxRetries}
               min={0}
               onChange={(maxRetries) => setDraft((prev) => ({ ...prev, maxRetries }))}
             />
             <NumberField
-              label="Tempo máximo de espera por tentativa"
+              label={t("resilienceMaxWaitPerAttempt")}
               value={draft.maxRetryWaitSec}
               min={0}
               suffix="sec"
@@ -685,17 +680,17 @@ function WaitForCooldownCard({
         ) : (
           <>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Ativar espera no servidor</div>
+              <div className="text-xs text-text-muted">{t("resilienceEnableServerWait")}</div>
               <div className="mt-1 text-sm font-semibold text-text-main">
-                {value.enabled ? "Ativado" : "Desativado"}
+                {value.enabled ? t("statusEnabled") : t("statusDisabled")}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Máximo de tentativas</div>
+              <div className="text-xs text-text-muted">{t("resilienceMaxAttempts")}</div>
               <div className="mt-1 text-sm font-semibold text-text-main">{value.maxRetries}</div>
             </div>
             <div className="rounded-xl border border-border bg-bg-subtle p-4">
-              <div className="text-xs text-text-muted">Tempo máximo de espera por tentativa</div>
+              <div className="text-xs text-text-muted">{t("resilienceMaxWaitPerAttempt")}</div>
               <div className="mt-1 text-sm font-semibold text-text-main">
                 {value.maxRetryWaitSec}s
               </div>

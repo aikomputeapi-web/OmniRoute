@@ -1,6 +1,6 @@
 ---
 title: "OmniRoute Architecture"
-version: 3.8.0
+version: 3.8.2
 lastUpdated: 2026-05-13
 ---
 
@@ -17,7 +17,7 @@ It provides a single OpenAI-compatible endpoint (`/v1/*`) and routes traffic acr
 
 Core capabilities:
 
-- OpenAI-compatible API surface for CLI/tools (177 providers, 31 executors)
+- OpenAI-compatible API surface for CLI/tools (177 providers, 38 executors)
 - Request/response translation across provider formats
 - Model combo fallback (multi-model sequence)
 - Structured combo steps (`provider + model + connection`) with runtime ordering by `compositeTiers`
@@ -326,6 +326,29 @@ OAuth provider modules (14 individual files under `src/lib/oauth/providers/`):
 - Registry index: `src/lib/oauth/providers/index.ts`
 - Individual providers: `claude.ts`, `codex.ts`, `gemini.ts`, `antigravity.ts`, `qoder.ts`, `qwen.ts`, `kimi-coding.ts`, `github.ts`, `kiro.ts`, `cursor.ts`, `kilocode.ts`, `cline.ts`, `windsurf.ts`, `gitlab-duo.ts`
 - Thin wrapper: `src/lib/oauth/providers.ts` — re-exports from individual modules
+
+## 5) Embedded Services (v3.8.4)
+
+OmniRoute can install, supervise, and route to locally-running AI tool processes
+called **embedded services**. Two are shipped in v3.8.4: 9Router and CLIProxyAPI.
+
+Architecture layers:
+
+- **UI** (`/dashboard/providers/services`) — two-tab page with lifecycle controls,
+  live log streaming, API key management, and (for 9Router) embedded native UI via
+  an internal reverse proxy.
+- **API** (`/api/services/{name}/*`) — 8 endpoints for 9Router, 7 for CLIProxyAPI,
+  all classified **LOCAL_ONLY** (hard rule #17). A shared `GET /api/services/[name]/logs`
+  SSE endpoint serves both services.
+- **Supervisor** (`src/lib/services/`) — generic `ServiceSupervisor` class wraps
+  `child_process.spawn`, holds a 5 MB ring buffer for SSE log streaming, a health
+  probe loop, an atomic operation lock, and a SIGTERM→SIGKILL graceful shutdown.
+  `bootstrap.ts` wires all configured services at process start.
+- **Provider/executor** (`open-sse/executors/ninerouter.ts`) — 9Router is exposed as
+  a real provider. Models are prefixed `9router/{sub}/{model}` and synced every 5 min
+  from 9Router's `/v1/models` endpoint.
+
+Deep-dive: `docs/frameworks/EMBEDDED-SERVICES.md`
 
 ## Major Subsystems (v3.8.0)
 

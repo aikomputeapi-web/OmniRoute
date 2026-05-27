@@ -1,6 +1,15 @@
 import path from "node:path";
 import os from "node:os";
 
+import { generateClaudeConfig } from "./claude";
+import { generateClineConfig } from "./cline";
+import { generateCodexConfig } from "./codex";
+import { generateContinueConfig } from "./continue";
+import { generateHermesConfig } from "./hermes";
+import { generateHermesAgentConfig, type HermesAgentConfigPayload } from "./hermes-agent";
+import { generateKilocodeConfig } from "./kilocode";
+import { generateOpencodeConfig } from "./opencode";
+
 export interface GenerateOptions {
   baseUrl: string;
   apiKey: string;
@@ -14,7 +23,7 @@ export interface GenerateResult {
   error?: string;
 }
 
-function validateBaseUrl(url: string): boolean {
+export function validateBaseUrl(url: string): boolean {
   try {
     const u = new URL(url);
     return u.protocol === "http:" || u.protocol === "https:";
@@ -35,23 +44,22 @@ const TOOL_CONFIG_PATHS: Record<string, string> = {
   cline: path.join(os.homedir(), ".cline", "data", "globalState.json"),
   kilocode: path.join(os.homedir(), ".config", "kilocode", "settings.json"),
   continue: path.join(os.homedir(), ".continue", "config.yaml"),
+  hermes: path.join(os.homedir(), ".hermes", "config.yaml"),
+  "hermes-agent": path.join(os.homedir(), ".hermes", "config.yaml"),
 };
 
-async function importGenerator(toolId: string) {
-  const generators: Record<string, { module: string; export: string }> = {
-    claude: { module: "./claude.js", export: "generateClaudeConfig" },
-    codex: { module: "./codex.js", export: "generateCodexConfig" },
-    opencode: { module: "./opencode.js", export: "generateOpencodeConfig" },
-    cline: { module: "./cline.js", export: "generateClineConfig" },
-    kilocode: { module: "./kilocode.js", export: "generateKilocodeConfig" },
-    continue: { module: "./continue.js", export: "generateContinueConfig" },
-  };
+type ConfigGenerator = (options: GenerateOptions) => string | Promise<string>;
 
-  const gen = generators[toolId];
-  if (!gen) return null;
-  const mod = await import(gen.module);
-  return { generate: mod[gen.export] };
-}
+const GENERATORS: Record<string, ConfigGenerator> = {
+  claude: generateClaudeConfig,
+  codex: generateCodexConfig,
+  opencode: generateOpencodeConfig,
+  cline: generateClineConfig,
+  kilocode: generateKilocodeConfig,
+  continue: generateContinueConfig,
+  hermes: generateHermesConfig,
+  "hermes-agent": generateHermesAgentConfig as any, // rich multi-role version
+};
 
 export async function generateConfig(
   toolId: string,
@@ -70,11 +78,11 @@ export async function generateConfig(
   }
 
   try {
-    const mod = await importGenerator(toolId);
-    if (!mod) {
+    const generate = GENERATORS[toolId];
+    if (!generate) {
       return { success: false, configPath: "", error: `Unknown tool: ${toolId}` };
     }
-    const content = await mod.generate(options);
+    const content = await generate(options);
     const configPath = TOOL_CONFIG_PATHS[toolId] || "";
     return { success: true, configPath, content };
   } catch (err) {
@@ -84,7 +92,15 @@ export async function generateConfig(
 }
 
 export async function generateAllConfigs(options: GenerateOptions): Promise<GenerateResult[]> {
-  const toolIds = ["claude", "codex", "opencode", "cline", "kilocode", "continue"] as const;
+  const toolIds = [
+    "claude",
+    "codex",
+    "opencode",
+    "cline",
+    "kilocode",
+    "continue",
+    "hermes",
+  ] as const;
   const results = await Promise.allSettled(toolIds.map((id) => generateConfig(id, options)));
 
   return results.map((r) =>
