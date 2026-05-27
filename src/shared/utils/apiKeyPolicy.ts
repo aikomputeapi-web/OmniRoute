@@ -379,7 +379,7 @@ export async function enforceApiKeyPolicy(
     if (apiKeyInfo.rateLimits && apiKeyInfo.rateLimits.length > 0) {
       rulesToApply = [...apiKeyInfo.rateLimits];
     } else {
-      rulesToApply = [...DEFAULT_RATE_LIMITS];
+      rulesToApply = [...DEFAULT_RATE_LIMITS, ...ENV_DEFAULT_RATE_LIMITS];
       if (apiKeyInfo.maxRequestsPerDay) {
         rulesToApply = rulesToApply.filter((r) => r.window !== 86400);
         rulesToApply.push({ limit: apiKeyInfo.maxRequestsPerDay, window: 86400 });
