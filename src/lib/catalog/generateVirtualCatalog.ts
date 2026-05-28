@@ -79,6 +79,31 @@ export interface VirtualCatalogResult {
 // Tag used to identify auto-generated virtual catalog combos
 const VIRTUAL_CATALOG_TAG = "__virtual_catalog__";
 
+const ALLOWED_OPENROUTER_MODELS = new Set([
+  "moonshotai/kimi-k2.6:free",
+  "minimax/minimax-m2.5:free",
+  "openai/gpt-oss-120b:free",
+  "openai/gpt-oss-20b:free",
+]);
+
+const ALLOWED_NVIDIA_MODELS = new Set([
+  "moonshotai/kimi-k2.6",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "z-ai/glm-5.1",
+  "minimaxai/minimax-m2.7",
+]);
+
+const FORCED_CONSOLIDATION_MODELS = new Set([
+  "claude-sonnet-4-6",
+  "claude-opus-4-7",
+  "minimax-2.7",
+  "kimi-k2.6",
+  "gpt-oss-120b",
+  "gpt-oss-20b",
+  "glm-5.1",
+]);
+
 /**
  * Sanitize a model root ID into a safe combo name.
  * Replaces slashes with hyphens so "deepseek/deepseek-v4-pro" → "deepseek-deepseek-v4-pro".
@@ -90,6 +115,60 @@ function sanitizeComboName(rootId: string): string {
     .replace(/[^a-zA-Z0-9._-]/g, "-")
     .replace(/-{2,}/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+export function getCanonicalRootId(rootId: string): string {
+  const lower = rootId.toLowerCase();
+  if (lower.includes("claude") && lower.includes("sonnet")) {
+    return "claude-sonnet-4-6";
+  }
+  if (lower.includes("claude") && lower.includes("opus")) {
+    return "claude-opus-4-7";
+  }
+  if (lower.includes("minimax")) {
+    return "minimax-2.7";
+  }
+  if (lower.includes("kimi") && (lower.includes("k2.6") || lower.includes("k2-6"))) {
+    return "kimi-k2.6";
+  }
+  if (lower.includes("gpt-oss-120b")) {
+    return "gpt-oss-120b";
+  }
+  if (lower.includes("gpt-oss-20b")) {
+    return "gpt-oss-20b";
+  }
+  if (lower.includes("glm") && lower.includes("5.1")) {
+    return "glm-5.1";
+  }
+  return rootId;
+}
+
+function parseVersion(id: string) {
+  const match = id.match(/\d+(\.\d+)?/g) || [];
+  const numbers = match.map((n) => parseFloat(n));
+  const isThinking =
+    id.toLowerCase().includes("thinking") || id.toLowerCase().includes("reasoning");
+  return { numbers, isThinking };
+}
+
+function compareVersions(idA: string, idB: string): number {
+  const vA = parseVersion(idA);
+  const vB = parseVersion(idB);
+
+  const len = Math.max(vA.numbers.length, vB.numbers.length);
+  for (let i = 0; i < len; i++) {
+    const numA = vA.numbers[i] ?? 0;
+    const numB = vB.numbers[i] ?? 0;
+    if (numA !== numB) {
+      return numA - numB;
+    }
+  }
+
+  if (vA.isThinking !== vB.isThinking) {
+    return vA.isThinking ? -1 : 1; // regular version preferred over thinking version
+  }
+
+  return 0;
 }
 
 // ──────────────────────────────────────────────────────────
@@ -205,8 +284,12 @@ async function collectAllProviderModels(): Promise<ProviderModelEntry[]> {
     if (!activeProviders.has(alias) && !activeProviders.has(providerId)) continue;
 
     for (const model of providerModels) {
+      if (providerId === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(model.id)) continue;
+      if (providerId === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(model.id)) continue;
       if (!hasEligibleConnectionForModel(getConns(providerId), model.id)) continue;
-      if (getModelIsHidden(providerId, model.id)) continue;
+
+      const isAllowedExclusively = providerId === "nvidia" || providerId === "openrouter";
+      if (!isAllowedExclusively && getModelIsHidden(providerId, model.id)) continue;
 
       entries.push({
         prefixedId: `${alias}/${model.id}`,
@@ -233,8 +316,16 @@ async function collectAllProviderModels(): Promise<ProviderModelEntry[]> {
       if (!activeProviders.has(alias) && !activeProviders.has(providerId)) continue;
 
       for (const sm of syncedModels) {
+        if (providerId === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(sm.id)) {
+          continue;
+        }
+        if (providerId === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(sm.id)) {
+          continue;
+        }
         if (!hasEligibleConnectionForModel(getConns(providerId), sm.id)) continue;
-        if (getModelIsHidden(providerId, sm.id)) continue;
+
+        const isAllowedExclusively = providerId === "nvidia" || providerId === "openrouter";
+        if (!isAllowedExclusively && getModelIsHidden(providerId, sm.id)) continue;
 
         const endpoints = Array.isArray(sm.supportedEndpoints) ? sm.supportedEndpoints : ["chat"];
         let modelType: ProviderModelEntry["type"] = "chat";
@@ -277,8 +368,12 @@ async function collectAllProviderModels(): Promise<ProviderModelEntry[]> {
         if (!model || typeof model !== "object") continue;
         const modelId = (model as Record<string, unknown>).id as string;
         if (!modelId) continue;
-        if ((model as Record<string, unknown>).isHidden === true) continue;
+        if (providerId === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(modelId)) continue;
+        if (providerId === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(modelId)) continue;
         if (!hasEligibleConnectionForModel(getConns(providerId), modelId)) continue;
+
+        const isAllowedExclusively = providerId === "nvidia" || providerId === "openrouter";
+        if (!isAllowedExclusively && (model as Record<string, unknown>).isHidden === true) continue;
 
         const prefixedId = `${alias}/${modelId}`;
         if (entries.some((e) => e.prefixedId === prefixedId)) continue;
@@ -358,9 +453,10 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
   const chatModels = allModels.filter((m) => m.type === "chat");
   const grouped = new Map<string, ProviderModelEntry[]>();
   for (const model of chatModels) {
-    const existing = grouped.get(model.rootId) || [];
+    const canonicalId = getCanonicalRootId(model.rootId);
+    const existing = grouped.get(canonicalId) || [];
     existing.push(model);
-    grouped.set(model.rootId, existing);
+    grouped.set(canonicalId, existing);
   }
 
   if (chatModels.length > 0 && grouped.size === 0) {
@@ -409,6 +505,14 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
 
   // 4. Create new combos + mappings for each grouped model
   for (const [rootId, variants] of grouped) {
+    // Only consolidate if the model is available from more than one provider,
+    // OR if it belongs to the forced consolidation list (Claude, Minimax 2.7, Kimi K2.6, etc.)
+    const uniqueProviders = new Set(variants.map((v) => v.providerId));
+
+    if (uniqueProviders.size <= 1 && !FORCED_CONSOLIDATION_MODELS.has(rootId)) {
+      continue;
+    }
+
     // Sanitize the root ID for use as a combo name (handles slashes, special chars)
     const comboName = sanitizeComboName(rootId);
     if (!comboName) {
@@ -424,7 +528,7 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       continue;
     }
 
-    // Sort by provider priority (highest first)
+    // Sort by provider priority (highest first), then by version (latest first)
     const sorted = variants.sort((a, b) => {
       const priorityA =
         providerOrder.length > 0
@@ -434,7 +538,12 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
         providerOrder.length > 0
           ? getProviderPriorityFromOrder(b.providerId, providerOrder)
           : getDefaultProviderPriority(b.providerId);
-      return priorityB - priorityA;
+
+      if (priorityA !== priorityB) {
+        return priorityB - priorityA;
+      }
+
+      return compareVersions(b.rootId, a.rootId);
     });
 
     try {
@@ -475,6 +584,132 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
           });
         } catch {
           /* non-critical: sanitized name mapping is enough */
+        }
+      }
+
+      // Map all individual raw variant model IDs in this group to the same combo
+      // so requests using specific version names still route correctly
+      const uniqueRawIds = new Set(variants.map((v) => v.rootId));
+      for (const rawId of uniqueRawIds) {
+        if (rawId !== rootId && rawId !== comboName) {
+          try {
+            await createModelComboMapping({
+              pattern: rawId,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {
+            /* ignore duplicate or error */
+          }
+        }
+      }
+
+      // Explicitly map all known allowed names (including inactive provider variants)
+      // for our forced consolidation models to ensure client request compatibility.
+      if (rootId === "gpt-oss-120b") {
+        const extraPatterns = ["openai/gpt-oss-120b:free", "openai/gpt-oss-120b", "gpt-oss-120b"];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "gpt-oss-20b") {
+        const extraPatterns = ["openai/gpt-oss-20b:free", "openai/gpt-oss-20b", "gpt-oss-20b"];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "kimi-k2.6") {
+        const extraPatterns = ["moonshotai/kimi-k2.6:free", "moonshotai/kimi-k2.6", "kimi-k2.6"];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "minimax-2.7") {
+        const extraPatterns = ["minimax/minimax-m2.5:free", "minimaxai/minimax-m2.7", "minimax-2.7", "minimax-m2.5", "minimax-m2.7"];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "glm-5.1") {
+        const extraPatterns = ["z-ai/glm-5.1", "glm-5.1"];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "claude-sonnet-4-6") {
+        const extraPatterns = [
+          "claude-sonnet-4-6", "claude-sonnet-4.6", "claude-sonnet-4.5", "claude-sonnet-4.0",
+          "claude-sonnet-4-6-thinking", "claude-sonnet-4.6-thinking"
+        ];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "claude-opus-4-7") {
+        const extraPatterns = [
+          "claude-opus-4-7", "claude-opus-4.7", "claude-opus-4.6", "claude-opus-4.5",
+          "claude-opus-4-5-20251101", "claude-opus-4-7-thinking", "claude-opus-4.7-thinking"
+        ];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
         }
       }
 

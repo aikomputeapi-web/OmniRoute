@@ -58,6 +58,31 @@ const FALLBACK_ALIAS_TO_PROVIDER = {
   qw: "qwen",
 };
 
+const ALLOWED_OPENROUTER_MODELS = new Set([
+  "moonshotai/kimi-k2.6:free",
+  "minimax/minimax-m2.5:free",
+  "openai/gpt-oss-120b:free",
+  "openai/gpt-oss-20b:free",
+]);
+
+const ALLOWED_NVIDIA_MODELS = new Set([
+  "moonshotai/kimi-k2.6",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "z-ai/glm-5.1",
+  "minimaxai/minimax-m2.7",
+]);
+
+const FORCED_CONSOLIDATION_MODELS = new Set([
+  "claude-sonnet-4-6",
+  "claude-opus-4-7",
+  "minimax-2.7",
+  "kimi-k2.6",
+  "gpt-oss-120b",
+  "gpt-oss-20b",
+  "glm-5.1",
+]);
+
 type ComboCatalogTarget = {
   modelStr?: string;
   provider?: string | null;
@@ -667,6 +692,9 @@ export async function getUnifiedModelsResponse(
       if (providersWithSyncedModels.has(canonicalProviderId)) continue;
 
       for (const model of providerModels) {
+        if (canonicalProviderId === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(model.id)) {
+          continue;
+        }
         if (!providerSupportsModel(canonicalProviderId, model.id)) continue;
         const aliasId = `${alias}/${model.id}`;
         if (getModelIsHidden(canonicalProviderId, model.id)) continue;
@@ -755,8 +783,16 @@ export async function getUnifiedModelsResponse(
         }
 
         for (const sm of syncedModels) {
+          if (providerId === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(sm.id)) {
+            continue;
+          }
+          if (providerId === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(sm.id)) {
+            continue;
+          }
           if (!providerSupportsModel(canonicalProviderId, sm.id)) continue;
-          if (getModelIsHidden(providerId, sm.id)) continue;
+
+          const isAllowedExclusively = providerId === "nvidia" || providerId === "openrouter";
+          if (!isAllowedExclusively && getModelIsHidden(providerId, sm.id)) continue;
 
           // Strip modelIdPrefix (e.g. "accounts/fireworks/models/") from display ID
           // so synced model IDs match the short IDs from static registry.
@@ -886,6 +922,8 @@ export async function getUnifiedModelsResponse(
     for (const embModel of getAllEmbeddingModels()) {
       if (!isProviderActive(embModel.provider)) continue;
       const rawModelId = embModel.id.split("/").pop() || embModel.id;
+      if (embModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
+      if (embModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
       if (!providerSupportsModel(embModel.provider, rawModelId)) continue;
       if (hasEquivalentSpecialtyModel(embModel.provider, rawModelId, "embedding", embModel.id)) {
         continue;
@@ -905,6 +943,8 @@ export async function getUnifiedModelsResponse(
     for (const imgModel of getAllImageModels()) {
       if (!isProviderActive(imgModel.provider)) continue;
       const rawModelId = imgModel.id.split("/").pop() || imgModel.id;
+      if (imgModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
+      if (imgModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
       if (!providerSupportsModel(imgModel.provider, rawModelId)) continue;
       models.push({
         id: imgModel.id,
@@ -923,6 +963,8 @@ export async function getUnifiedModelsResponse(
     for (const rerankModel of getAllRerankModels()) {
       if (!isProviderActive(rerankModel.provider)) continue;
       const rawModelId = rerankModel.id.split("/").pop() || rerankModel.id;
+      if (rerankModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
+      if (rerankModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
       if (!providerSupportsModel(rerankModel.provider, rawModelId)) continue;
       if (hasEquivalentSpecialtyModel(rerankModel.provider, rawModelId, "rerank", rerankModel.id)) {
         continue;
@@ -941,6 +983,8 @@ export async function getUnifiedModelsResponse(
     for (const audioModel of getAllAudioModels()) {
       if (!isProviderActive(audioModel.provider)) continue;
       const rawModelId = audioModel.id.split("/").pop() || audioModel.id;
+      if (audioModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
+      if (audioModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
       if (!providerSupportsModel(audioModel.provider, rawModelId)) continue;
       models.push({
         id: audioModel.id,
@@ -956,6 +1000,8 @@ export async function getUnifiedModelsResponse(
     for (const modModel of getAllModerationModels()) {
       if (!isProviderActive(modModel.provider)) continue;
       const rawModelId = modModel.id.split("/").pop() || modModel.id;
+      if (modModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
+      if (modModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
       if (!providerSupportsModel(modModel.provider, rawModelId)) continue;
       models.push({
         id: modModel.id,
@@ -970,6 +1016,8 @@ export async function getUnifiedModelsResponse(
     for (const videoModel of getAllVideoModels()) {
       if (!isProviderActive(videoModel.provider)) continue;
       const rawModelId = videoModel.id.split("/").pop() || videoModel.id;
+      if (videoModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
+      if (videoModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
       if (!providerSupportsModel(videoModel.provider, rawModelId)) continue;
       models.push({
         id: videoModel.id,
@@ -984,6 +1032,8 @@ export async function getUnifiedModelsResponse(
     for (const musicModel of getAllMusicModels()) {
       if (!isProviderActive(musicModel.provider)) continue;
       const rawModelId = musicModel.id.split("/").pop() || musicModel.id;
+      if (musicModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
+      if (musicModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
       if (!providerSupportsModel(musicModel.provider, rawModelId)) continue;
       models.push({
         id: musicModel.id,
@@ -1026,15 +1076,21 @@ export async function getUnifiedModelsResponse(
         for (const model of providerCustomModels) {
           const modelId = typeof model.id === "string" ? model.id : null;
           if (!modelId) continue;
-          if (model.isHidden === true) continue;
-          if (
-            !hasEligibleConnectionForModel(
-              getConnectionsForProvider(alias, canonicalProviderId, providerId, parentProviderType),
-              modelId
-            )
-          ) {
+          if (canonicalProviderId === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(modelId)) {
             continue;
           }
+          if (canonicalProviderId === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(modelId)) {
+            continue;
+          }
+          if (!hasEligibleConnectionForModel(
+            getConnectionsForProvider(alias, canonicalProviderId, providerId, parentProviderType),
+            modelId
+          )) {
+            continue;
+          }
+
+          const isAllowedExclusively = canonicalProviderId === "nvidia" || canonicalProviderId === "openrouter";
+          if (!isAllowedExclusively && model.isHidden === true) continue;
 
           // Skip if already added as built-in
           const aliasId = `${alias}/${modelId}`;
@@ -1134,8 +1190,16 @@ export async function getUnifiedModelsResponse(
       for (const model of fallbackModels) {
         const modelId = typeof model.id === "string" ? model.id : null;
         if (!modelId) continue;
-        if (getModelIsHidden(providerId, modelId)) continue;
+        if (providerId === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(modelId)) {
+          continue;
+        }
+        if (providerId === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(modelId)) {
+          continue;
+        }
         if (!hasEligibleConnectionForModel([conn], modelId)) continue;
+
+        const isAllowedExclusively = providerId === "nvidia" || providerId === "openrouter";
+        if (!isAllowedExclusively && getModelIsHidden(providerId, modelId)) continue;
 
         const aliasId = `${alias}/${modelId}`;
         if (models.some((m) => m.id === aliasId)) continue;
@@ -1221,20 +1285,48 @@ export async function getUnifiedModelsResponse(
           .replace(/-{2,}/g, "-")
           .replace(/^-+|-+$/g, "");
 
+      const getCanonicalRootId = (rootId: string): string => {
+        const lower = rootId.toLowerCase();
+        if (lower.includes("claude") && lower.includes("sonnet")) {
+          return "claude-sonnet-4-6";
+        }
+        if (lower.includes("claude") && lower.includes("opus")) {
+          return "claude-opus-4-7";
+        }
+        if (lower.includes("minimax")) {
+          return "minimax-2.7";
+        }
+        if (lower.includes("kimi") && (lower.includes("k2.6") || lower.includes("k2-6"))) {
+          return "kimi-k2.6";
+        }
+        if (lower.includes("gpt-oss-120b")) {
+          return "gpt-oss-120b";
+        }
+        if (lower.includes("gpt-oss-20b")) {
+          return "gpt-oss-20b";
+        }
+        if (lower.includes("glm") && lower.includes("5.1")) {
+          return "glm-5.1";
+        }
+        return rootId;
+      };
+
       outputModels = enrichedModels.filter((model) => {
         // Always keep virtual catalog entries
         if (model.owned_by === virtualCatalogBrand) return true;
         // For provider models: check if the root ID is covered by virtual catalog
         const rootId = model.root || model.id;
-        if (virtualCatalogRootIds.has(rootId)) return false;
+        const canonical = getCanonicalRootId(rootId);
+        if (virtualCatalogRootIds.has(canonical)) return false;
         // Check sanitized form (handles models with slashes like "deepseek/deepseek-v4-pro")
-        if (virtualCatalogRootIds.has(sanitize(rootId))) return false;
+        if (virtualCatalogRootIds.has(sanitize(canonical))) return false;
         // Also check if model.id itself is "alias/rootId" where rootId is virtual
         const slashIdx = typeof model.id === "string" ? model.id.indexOf("/") : -1;
         if (slashIdx > 0) {
           const unprefixedId = model.id.slice(slashIdx + 1);
-          if (virtualCatalogRootIds.has(unprefixedId)) return false;
-          if (virtualCatalogRootIds.has(sanitize(unprefixedId))) return false;
+          const canonicalUnprefixed = getCanonicalRootId(unprefixedId);
+          if (virtualCatalogRootIds.has(canonicalUnprefixed)) return false;
+          if (virtualCatalogRootIds.has(sanitize(canonicalUnprefixed))) return false;
         }
         return true;
       });
