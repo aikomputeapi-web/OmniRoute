@@ -89,6 +89,7 @@ import {
 import { registerBailianCodingPlanQuotaFetcher } from "@omniroute/open-sse/services/bailianQuotaFetcher.ts";
 import { registerCrofUsageFetcher } from "@omniroute/open-sse/services/crofUsageFetcher.ts";
 import { registerDeepseekQuotaFetcher } from "@omniroute/open-sse/services/deepseekQuotaFetcher.ts";
+import { registerOpencodeQuotaFetcher } from "@omniroute/open-sse/services/opencodeQuotaFetcher.ts";
 import { registerGenericQuotaFetchers } from "@omniroute/open-sse/services/genericQuotaFetcher.ts";
 import {
   getCooldownAwareRetryDecision,
@@ -111,6 +112,11 @@ registerCrofUsageFetcher();
 // Register DeepSeek balance quota fetcher.
 // Hooks into quotaPreflight + quotaMonitor so combos can switch accounts before balance is exhausted.
 registerDeepseekQuotaFetcher();
+
+// Register OpenCode quota fetcher (opencode-go / opencode / opencode-zen).
+// Surfaces the $12/5h, $30/wk, $60/mo windows in the limits page and enables
+// quota-aware preflight switching between connections. (#2852)
+registerOpencodeQuotaFetcher();
 
 // Register the generic quota fetcher for every other provider that has a
 // usage implementation in usage.ts but no bespoke preflight fetcher. This is
@@ -438,6 +444,7 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
     const checkModelAvailable = async (
       modelString: string,
       target?: {
+        allowRateLimitedConnection?: boolean;
         connectionId?: string | null;
         allowedConnectionIds?: string[] | null;
         executionKey?: string | null;
@@ -469,6 +476,7 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
         resolvedModel,
         {
           sessionKey: sessionAffinityKey,
+          ...(target?.allowRateLimitedConnection ? { allowRateLimitedConnections: true } : {}),
           ...(target?.connectionId ? { forcedConnectionId: target.connectionId } : {}),
         }
       );
@@ -496,6 +504,7 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
         b: any,
         m: string,
         target?: {
+          allowRateLimitedConnection?: boolean;
           connectionId?: string | null;
           executionKey?: string | null;
           stepId?: string | null;
@@ -520,6 +529,7 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
             comboStepId: target?.stepId || null,
             comboExecutionKey: target?.executionKey || target?.stepId || null,
             skipUpstreamRetry: target?.failoverBeforeRetry ?? false,
+            allowRateLimitedConnection: target?.allowRateLimitedConnection === true,
             preselectedCredentials: comboPreselectedCredentials.get(
               getComboCredentialCacheKey(m, target)
             ),
@@ -651,6 +661,7 @@ async function handleSingleModelChat(
     comboStepId?: string | null;
     comboExecutionKey?: string | null;
     skipUpstreamRetry?: boolean;
+    allowRateLimitedConnection?: boolean;
     preselectedCredentials?: any;
     cachedSettings?: any;
   } = {},
@@ -811,6 +822,9 @@ async function handleSingleModelChat(
               {
                 sessionKey: runtimeOptions.sessionAffinityKey ?? runtimeOptions.sessionId ?? null,
                 excludeConnectionIds: Array.from(excludedConnectionIds),
+                ...(runtimeOptions.allowRateLimitedConnection
+                  ? { allowRateLimitedConnections: true }
+                  : {}),
                 ...(forceLiveComboTest
                   ? {
                       allowSuppressedConnections: true,
@@ -997,9 +1011,62 @@ async function handleSingleModelChat(
         return result.response;
       }
 
-      if (result.errorType === "stream_timeout" || result.errorType === "stream_early_eof") {
+      const isAntigravityStreamReadinessFailure =
+        provider === "antigravity" &&
+        (result.errorCode === "STREAM_READINESS_TIMEOUT" ||
+          result.errorCode === "STREAM_EARLY_EOF" ||
+          result.errorType === "stream_timeout" ||
+          result.errorType === "stream_early_eof");
+
+      if (
+        (result.errorType === "stream_timeout" || result.errorType === "stream_early_eof") &&
+        !isAntigravityStreamReadinessFailure
+      ) {
         // Stream readiness timeout is an upstream stall after an HTTP response was received,
         // not an account/quota failure. Do NOT mark the account unavailable here.
+        return result.response;
+      }
+
+      if (isAntigravityStreamReadinessFailure) {
+        const { shouldFallback, cooldownMs } = await markAccountUnavailable(
+          credentials.connectionId,
+          result.status || HTTP_STATUS.BAD_GATEWAY,
+          result.error || result.errorCode || "Antigravity stream ended before useful content",
+          provider,
+          model,
+          providerProfile
+        );
+
+        if (shouldFallback && !hasForcedConnection) {
+          log.warn(
+            "AUTH",
+            `Antigravity connection ${accountId}... produced no useful stream content, trying fallback connection`
+          );
+          if (Number.isFinite(cooldownMs) && cooldownMs > 0) {
+            lastCooldownMs = cooldownMs;
+            requestRetryLastCooldownMs = cooldownMs;
+          }
+          if (runtimeOptions.sessionAffinityKey) {
+            try {
+              const affinity = getSessionAccountAffinity(
+                runtimeOptions.sessionAffinityKey,
+                provider
+              );
+              if (affinity?.connectionId === credentials.connectionId) {
+                deleteSessionAccountAffinity(runtimeOptions.sessionAffinityKey, provider);
+              }
+            } catch {
+              // best-effort: selection also excludes this connection for the current retry.
+            }
+          }
+          excludedConnectionIds.add(credentials.connectionId);
+          lastError = result.error;
+          lastStatus = result.status;
+          requestRetryLastError = result.error;
+          requestRetryLastStatus = result.status;
+          continue;
+        }
+
         return result.response;
       }
 
@@ -1140,6 +1207,10 @@ async function handleSingleModelChat(
       // Daily quota lockout overrides subsequent rate_limited lockout, ensuring lockout until tomorrow 0:00
       let dailyQuotaExhausted = false;
       const errorStr = String(result.error || "");
+      const failureKind =
+        result.status === 429
+          ? classify429FromError({ status: result.status, message: errorStr })
+          : undefined;
       if (result.status === 429 && isDailyQuotaExhausted(errorStr)) {
         // Parse which model is quota-limited
         const match = errorStr.match(/today's quota for model ([^,]+)/);
@@ -1174,10 +1245,6 @@ async function handleSingleModelChat(
       // quotaCache as exhausted for 5 minutes while usage quota may still be available.
       if (!dailyQuotaExhausted) {
         const passthroughModels = credentials.providerSpecificData?.passthroughModels;
-        const failureKind =
-          result.status === 429
-            ? classify429FromError({ status: result.status, message: errorStr })
-            : undefined;
         if (
           result.status === 429 &&
           shouldMarkAccountExhaustedFrom429(provider, model, passthroughModels, failureKind)
@@ -1204,7 +1271,11 @@ async function handleSingleModelChat(
             result.error,
             provider,
             model,
-            providerProfile
+            providerProfile,
+            {
+              persistUnavailableState:
+                !(isCombo && result.status === 429 && (failureKind === "rate_limit" || failureKind === "transient")),
+            }
           );
 
       if (shouldFallback) {
