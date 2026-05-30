@@ -72,15 +72,15 @@ const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits
       limitMonthTokens: 1_500_000,
     },
   },
-  basic: {
-    planName: "Basic",
+  "pay-as-you-go": {
+    planName: "Pay As You Go",
     limits: {
-      requestsPerMinute: 20,
-      requestsPerDay: 1000,
+      requestsPerMinute: 300,
+      requestsPerDay: 12000,
       requestsPerMonth: 0,
-      limit5hTokens: 600_000,
-      limitWeekTokens: 2_000_000,
-      limitMonthTokens: 6_000_000,
+      limit5hTokens: 0,
+      limitWeekTokens: 0,
+      limitMonthTokens: 0,
     },
   },
   pro: {
