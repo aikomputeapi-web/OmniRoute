@@ -480,7 +480,7 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
           ...(target?.connectionId ? { forcedConnectionId: target.connectionId } : {}),
         }
       );
-      if (!creds || creds.allRateLimited) return false;
+      if (!creds || "allRateLimited" in creds || "allExpired" in creds) return false;
 
       comboPreselectedCredentials.set(getComboCredentialCacheKey(modelString, target), creds);
       return true;
@@ -838,7 +838,7 @@ async function handleSingleModelChat(
             );
       preselectedCredentials = null;
 
-      if (!credentials || "allRateLimited" in credentials) {
+      if (!credentials || "allRateLimited" in credentials || "allExpired" in credentials) {
         if (credentials?.allRateLimited) {
           const retryDecision = getCooldownAwareRetryDecision({
             retryAfter: credentials.retryAfter,
@@ -1243,7 +1243,10 @@ async function handleSingleModelChat(
       // 7. Mark account as quota-exhausted only for explicit long-window quota signals.
       // A plain 429/high-traffic response should trigger fallback/cooldown, not poison
       // quotaCache as exhausted for 5 minutes while usage quota may still be available.
-      if (!dailyQuotaExhausted) {
+      const isUserRateLimit =
+        result.errorCode === "user_rate_limit_exceeded" ||
+        result.errorType === "user_rate_limit";
+      if (!dailyQuotaExhausted && !isUserRateLimit) {
         const passthroughModels = credentials.providerSpecificData?.passthroughModels;
         if (
           result.status === 429 &&
@@ -1261,7 +1264,7 @@ async function handleSingleModelChat(
         (credentials.providerSpecificData?.extraApiKeys as string[] | undefined) ?? [];
       const hasExtraKeys = extraKeys.length > 0 || connectionHasExtraKeys(credentials.connectionId);
       const is401 = result.status === 401;
-      const skipConnectionDisable = is401 && hasExtraKeys;
+      const skipConnectionDisable = (is401 && hasExtraKeys) || isUserRateLimit;
 
       const { shouldFallback, cooldownMs } = skipConnectionDisable
         ? { shouldFallback: false, cooldownMs: 0 }
