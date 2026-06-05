@@ -37,6 +37,7 @@ import {
   deleteSessionAccountAffinity,
   getCachedSettings,
   getCombos,
+  getCombosCacheVersion,
   getSessionAccountAffinity,
 } from "@/lib/localDb";
 import {
@@ -96,6 +97,10 @@ import {
   resolveCooldownAwareRetrySettings,
   waitForCooldownAwareRetry,
 } from "../services/cooldownAwareRetry";
+import {
+  constrainConnectionsToQuota,
+  resolveQuotaKeyScope,
+} from "../../lib/quota/quotaKey";
 
 registerCodexQuotaFetcher();
 
@@ -125,15 +130,26 @@ registerOpencodeQuotaFetcher();
 registerGenericQuotaFetchers();
 let combosCachePromise: Promise<unknown[]> | null = null;
 let combosCacheTs = 0;
+let combosCacheVersionSnapshot = -1;
 const COMBOS_CACHE_TTL_MS = 10_000;
 
 async function getCombosCachedForChat(): Promise<unknown[]> {
   const now = Date.now();
-  if (combosCachePromise && now - combosCacheTs < COMBOS_CACHE_TTL_MS) {
+  // Explicit non-null check: we intentionally cache and return the Promise
+  // itself (to dedupe concurrent callers), so this is not a forgotten await.
+  // The version check makes combo edits (create/update/delete/reorder) take
+  // effect immediately instead of after the 10s TTL — otherwise a removed
+  // target/model could keep being served as a "phantom" for up to 10s (#3147).
+  if (
+    combosCachePromise !== null &&
+    now - combosCacheTs < COMBOS_CACHE_TTL_MS &&
+    combosCacheVersionSnapshot === getCombosCacheVersion()
+  ) {
     return combosCachePromise;
   }
 
   combosCacheTs = now;
+  combosCacheVersionSnapshot = getCombosCacheVersion();
   combosCachePromise = getCombos().catch(() => []);
   return combosCachePromise;
 }
@@ -448,22 +464,44 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
         connectionId?: string | null;
         allowedConnectionIds?: string[] | null;
         executionKey?: string | null;
+        providerId?: string | null;
       }
     ) => {
       if (isComboLiveTest) return true;
 
-      // Use getModelInfo to properly resolve custom prefixes
+      // Use getModelInfo to resolve custom prefixes, but prefer the combo
+      // target's providerId when available — the model string's provider
+      // prefix may differ from the credential provider ID (e.g. model
+      // "xiaomi/mimo-v2-flash" resolves to provider "xiaomi" but the combo
+      // target specifies providerId: "opengate" for credential lookup).
       const modelInfo = await getModelInfo(modelString);
-      const provider = modelInfo.provider;
+      // Apply the same prefix-override guard as handleSingleModelChat:
+      // if providerId is just the prefix already in the model string, use
+      // the fully-resolved modelInfo.provider for a precise credential check.
+      const provider = (() => {
+        if (!target?.providerId) return modelInfo.provider;
+        if (target.providerId === modelInfo.provider) return modelInfo.provider;
+        if (modelString.startsWith(target.providerId + "/")) return modelInfo.provider;
+        return target.providerId;
+      })();
       if (!provider) return true; // can't determine provider, let it try
 
       const resolvedModel = modelInfo.model || modelString;
       const hasForcedConnection =
         typeof target?.connectionId === "string" && target.connectionId.trim().length > 0;
-      const allowedConnections = intersectAllowedConnectionIds(
+      let allowedConnections = intersectAllowedConnectionIds(
         apiKeyInfo?.allowedConnections ?? null,
         target?.allowedConnectionIds ?? null
       );
+
+      // A4: quota-exclusive keys must only use the pool's connection(s).
+      if (apiKeyInfo?.allowedQuotas && apiKeyInfo.allowedQuotas.length > 0) {
+        const quotaScope = await resolveQuotaKeyScope(apiKeyInfo.allowedQuotas);
+        allowedConnections = constrainConnectionsToQuota(
+          allowedConnections ?? [],
+          quotaScope.connectionIds
+        );
+      }
 
       if (Array.isArray(allowedConnections) && allowedConnections.length === 0) {
         return false;
@@ -510,6 +548,7 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
           stepId?: string | null;
           allowedConnectionIds?: string[] | null;
           failoverBeforeRetry?: boolean;
+          providerId?: string | null;
         }
       ) =>
         handleSingleModelChat(
@@ -534,6 +573,7 @@ export async function handleChat(request: any, clientRawRequest: any = null) {
               getComboCredentialCacheKey(m, target)
             ),
             cachedSettings: settings,
+            providerId: target?.providerId ?? null,
           },
           combo.strategy,
           true
@@ -664,6 +704,7 @@ async function handleSingleModelChat(
     allowRateLimitedConnection?: boolean;
     preselectedCredentials?: any;
     cachedSettings?: any;
+    providerId?: string | null;
   } = {},
   comboStrategy: string | null = null,
   isCombo: boolean = false
@@ -695,6 +736,8 @@ async function handleSingleModelChat(
           executionKey?: string | null;
           stepId?: string | null;
           failoverBeforeRetry?: boolean;
+          allowRateLimitedConnection?: boolean;
+          providerId?: string | null;
         }
       ) =>
         handleSingleModelChat(
@@ -713,6 +756,8 @@ async function handleSingleModelChat(
             comboStepId: null,
             comboExecutionKey: null,
             skipUpstreamRetry: target?.failoverBeforeRetry ?? false,
+            allowRateLimitedConnection: target?.allowRateLimitedConnection === true,
+            providerId: target?.providerId ?? null,
           },
           redirectCombo.strategy ?? "priority",
           false
@@ -726,15 +771,44 @@ async function handleSingleModelChat(
     });
   }
 
-  const { provider, model, sourceFormat, targetFormat, extendedContext, apiFormat } = resolved;
+  const { provider: resolvedProvider, model, sourceFormat, targetFormat, extendedContext, apiFormat } = resolved;
+  // Prefer the combo target's providerId when available — the model string's
+  // provider prefix may differ from the credential provider ID (e.g. model
+  // "xiaomi/mimo-v2-flash" resolves to provider "xiaomi" but the combo target
+  // may specify providerId: "opengate" for credential lookup).
+  // Guard: if runtimeOptions.providerId is merely the prefix already encoded in
+  // the model string (e.g. "p2" from "p2/test-model"), and resolveModelOrError
+  // expanded it to a full custom-node ID (e.g. "openai-compatible-chat-e2e-p2"),
+  // trust resolvedProvider so the executor receives the full node ID and can
+  // correctly resolve the custom baseUrl. (#3058 follow-up)
+  const provider = (() => {
+    if (!runtimeOptions.providerId) return resolvedProvider;
+    // If the override is identical to resolvedProvider, no-op.
+    if (runtimeOptions.providerId === resolvedProvider) return resolvedProvider;
+    // If the model string already encodes runtimeOptions.providerId as its prefix,
+    // the override is implicit (not an intentional redirect) — use resolvedProvider.
+    if (modelStr.startsWith(runtimeOptions.providerId + "/")) return resolvedProvider;
+    // Intentional override (e.g. providerId points to a different credential pool).
+    return runtimeOptions.providerId;
+  })();
   const forceLiveComboTest = runtimeOptions.forceLiveComboTest === true;
   const hasForcedConnection =
     typeof runtimeOptions.forcedConnectionId === "string" &&
     runtimeOptions.forcedConnectionId.trim().length > 0;
-  const effectiveAllowedConnections = intersectAllowedConnectionIds(
+  let effectiveAllowedConnections = intersectAllowedConnectionIds(
     apiKeyInfo?.allowedConnections ?? null,
     runtimeOptions.allowedConnectionIds ?? null
   );
+
+  // A4: quota-exclusive keys must only use the pool's connection(s).
+  if (apiKeyInfo?.allowedQuotas && apiKeyInfo.allowedQuotas.length > 0) {
+    const quotaScope = await resolveQuotaKeyScope(apiKeyInfo.allowedQuotas);
+    effectiveAllowedConnections = constrainConnectionsToQuota(
+      effectiveAllowedConnections ?? [],
+      quotaScope.connectionIds
+    );
+  }
+
   const bypassReason = forceLiveComboTest
     ? "combo live test"
     : hasForcedConnection
@@ -945,7 +1019,7 @@ async function handleSingleModelChat(
           refreshedCredentials
         );
       }
-      const proxyInfo = await safeResolveProxy(credentials.connectionId);
+      const proxyInfo = await safeResolveProxy(credentials.connectionId, apiKeyInfo?.id);
       const proxyStartTime = Date.now();
 
       // 4. Execute chat via core after breaker gate checks (with optional TLS tracking)

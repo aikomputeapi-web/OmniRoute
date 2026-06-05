@@ -1369,8 +1369,29 @@ export function getDbInstance(): SqliteDatabase {
   }
 
   startDbHealthCheckScheduler(db);
-  console.log(`[DB] SQLite database ready: ${sqliteFile}`);
+  // Log the resolved absolute DATA_DIR + SQLITE_FILE once at init so a
+  // multi-replica / Docker volume-topology mismatch (each replica opening a
+  // different on-disk DB → "phantom"/missing combos & connections) is
+  // diagnosable straight from the logs. (#3147)
+  console.log(
+    `[DB] SQLite database ready: ${sqliteFile} ` +
+      `(DATA_DIR=${path.resolve(DATA_DIR)}, SQLITE_FILE=${path.resolve(sqliteFile)})`
+  );
   return db;
+}
+
+/**
+ * Lightweight liveness probe — runs `SELECT 1` against the singleton DB.
+ * Returns `true` if the database is reachable, `false` on any error.
+ * Intended for use by the `/api/health/ping` route (Hard Rule #5: no raw SQL in routes).
+ */
+export function pingDb(): boolean {
+  try {
+    const result = getDbInstance().prepare("SELECT 1 AS ok").get() as { ok: number } | undefined;
+    return result?.ok === 1;
+  } catch {
+    return false;
+  }
 }
 
 export function closeDbInstance(options?: { checkpointMode?: CheckpointMode | null }): boolean {

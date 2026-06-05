@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/root/.npm \
 ENV OMNIROUTE_USE_TURBOPACK=1
 
 COPY . ./
-RUN --mount=type=cache,target=/app/.next/cache \
+RUN --mount=type=cache,target=/app/.build/next/cache \
   mkdir -p /app/data && npm run build
 
 # ── Runner base ────────────────────────────────────────────────────────────
@@ -57,7 +57,8 @@ LABEL org.opencontainers.image.title="omniroute" \
 ENV NODE_ENV=production
 ENV PORT=20128
 ENV HOSTNAME=0.0.0.0
-ENV NODE_OPTIONS="--max-old-space-size=256"
+ENV OMNIROUTE_MEMORY_MB=1024
+ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_MEMORY_MB}"
 
 # Data directory inside Docker — must match the volume mount in docker-compose.yml
 ENV DATA_DIR=/app/data
@@ -65,9 +66,9 @@ ENV DATA_DIR=/app/data
 RUN mkdir -p /app/data
 
 # The standalone build + syncStandaloneExtraModules bundles all runtime files
-# (.next, node_modules, migrations, scripts, docs, etc.) into .next/standalone/.
+# (.next, node_modules, migrations, scripts, docs, etc.) into .build/next/standalone/.
 # Explicit overrides below cover modules that NFT tracing may miss.
-COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.build/next/standalone ./
 # Explicitly copy @swc/helpers — not always traced by standalone output but needed at runtime
 COPY --from=builder /app/node_modules/@swc/helpers ./node_modules/@swc/helpers
 # Explicitly copy better-sqlite3 — native bindings are not reliably traced by

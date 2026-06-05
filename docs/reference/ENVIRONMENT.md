@@ -58,6 +58,7 @@ These **must** be set before the first run. Without them, the application will e
 | `API_KEY_SECRET`             | **Yes**              | _(none)_   | `src/lib/db/apiKeys.ts`                            | AES encryption key for API key values at rest in SQLite. Generate with `openssl rand -hex 32`.                                                                                                                                                                                |
 | `INITIAL_PASSWORD`           | **Yes**              | `CHANGEME` | Bootstrap script                                   | Sets the initial admin dashboard password (matches `.env.example` default — kept obviously insecure to force a change). **Change before first use.** After login, change via Dashboard → Settings → Security.                                                                 |
 | `OMNIROUTE_WS_BRIDGE_SECRET` | **Yes** (production) | _(unset)_  | `src/app/api/internal/codex-responses-ws/route.ts` | Shared secret for the internal Codex Responses WebSocket bridge. Authenticates bridge requests between the Electron/browser WS relay and OmniRoute. ⚠️ **REQUIRED in production — when unset, all WS bridge requests are rejected.** Generate with `openssl rand -base64 32`. |
+| `OMNIROUTE_PEER_STAMP_TOKEN` | No (auto)            | _(auto per boot)_ | `src/server/authz/policies/management.ts` | Per-process secret proving the trusted peer-IP stamp came from OmniRoute's own HTTP server (`scripts/dev/peer-stamp.mjs`). The authz middleware trusts request locality (loopback/LAN gating of LOCAL_ONLY routes) only when the stamp carries this token. Auto-generated each boot — leave unset; only pin it for multi-process setups that must share the stamp. |
 
 ### Generation Commands
 
@@ -334,6 +335,7 @@ detection above).
 | `OMNIROUTE_HTTP_TIMEOUT_MS` | `30000`    | `bin/cli/api.mjs`                       | Per-attempt HTTP timeout (ms) for CLI → server requests.                                                                        |
 | `OMNIROUTE_VERBOSE`         | `0`        | `bin/cli/api.mjs`                       | Set to `1` to print retry/backoff diagnostics to stderr during CLI commands.                                                    |
 | `OMNIROUTE_PLUGIN_PATH`     | _(unset)_  | `bin/cli/plugins.mjs`                   | Custom directory for CLI plugin discovery (`omniroute-cmd-*` packages). Defaults to `~/.omniroute/plugins/` when unset.         |
+| `OMNIROUTE_PLUGINS_ALLOW_EXEC` | `0`     | `src/lib/plugins/pluginWorker.ts`       | Set to `1` to allow plugins to request the `exec` permission (spawn child processes from the worker sandbox). Local operator only. |
 
 ---
 
@@ -351,6 +353,7 @@ detection above).
 | `OMNIROUTE_MCP_DESCRIPTION_COMPRESSION`         | `rtk`       | `open-sse/mcp-server/descriptionCompressor.ts`              | Compression algorithm/profile. Disable values: `0`, `false`, `off`.                                                           |
 | `MODEL_SYNC_INTERVAL_HOURS`                     | `24`        | `src/shared/services/modelSyncScheduler.ts`                 | Model catalog sync interval in hours.                                                                                         |
 | `PROVIDER_LIMITS_SYNC_INTERVAL_MINUTES`         | `70`        | `src/server-init.ts`                                        | Provider rate-limit and quota polling interval.                                                                               |
+| `PROVIDER_LIMITS_SYNC_SPACING_MS`               | `1500`      | `src/lib/usage/providerLimits.ts`                           | Gap (ms) between consecutive OAuth quota fetches in a bulk sync; OAuth connections are fetched one at a time to avoid bursting an upstream. `0` opts out (concurrent). |
 | `OMNIROUTE_DISABLE_BACKGROUND_SERVICES`         | `false`     | `src/instrumentation-node.ts`                               | Disable all background services (sync, pricing, model refresh). Useful for CI/test.                                           |
 | `OMNIROUTE_ENABLE_RUNTIME_BACKGROUND_TASKS`     | _(unset)_   | `src/lib/config/runtimeSettings.ts`                         | Force background tasks on under automated test detection. Set `1` to override the test heuristic.                             |
 | `OMNIROUTE_BUDGET_RESET_JOB_INTERVAL_MS`        | `600000`    | `src/lib/jobs/budgetResetJob.ts`                            | Budget reset check cadence (ms). Floor `10000`.                                                                               |
@@ -438,6 +441,7 @@ process.env[`${PROVIDER_ID}_USER_AGENT`]
 | Variable                 | Default Value                                 | When to Update                                                |
 | ------------------------ | --------------------------------------------- | ------------------------------------------------------------- |
 | `CLAUDE_USER_AGENT`      | `claude-cli/2.1.145 (external, cli)`          | When Anthropic releases a new CLI version                     |
+| `CLAUDE_DISABLE_TOOL_NAME_CLOAK` | `false` | `executors/base.ts` + `executors/cliproxyapi.ts` | Set to `1`/`true` to forward third-party harness tool names verbatim to Anthropic on both Anthropic-bound paths (native OAuth and CLIProxyAPI). By default the executor deterministically aliases non-Claude-Code tool names (Claude Code canonical mapping where one exists, otherwise PascalCase) and reverses them on the response via `_toolNameMap`, so harnesses with snake_case tools are not refused as fingerprinted third-party clients. Debugging only. |
 | `CODEX_USER_AGENT`       | `codex-cli/0.132.0 (Windows 10.0.26200; x64)` | When OpenAI updates the Codex CLI                             |
 | `CODEX_CLIENT_VERSION`   | `0.131.0`                                     | Override Codex client version independently of full UA string |
 | `GITHUB_USER_AGENT`      | `GitHubCopilotChat/0.45.1`                    | When GitHub Copilot Chat updates                              |
@@ -619,7 +623,7 @@ The logging system writes to both stdout and rotated log files. All configuratio
 
 | Variable                   | Default                         | Description                                                            |
 | -------------------------- | ------------------------------- | ---------------------------------------------------------------------- |
-| `OMNIROUTE_MEMORY_MB`      | `256` (Docker) / system default | V8 heap limit. Sets `--max-old-space-size`.                            |
+| `OMNIROUTE_MEMORY_MB`      | `512`                           | Runtime V8 heap limit. Docker standalone and `omniroute serve` use it to set `--max-old-space-size`. |
 | `PROMPT_CACHE_MAX_SIZE`    | `50`                            | Max cached system prompt entries.                                      |
 | `PROMPT_CACHE_MAX_BYTES`   | `2097152` (2 MB)                | Max total prompt cache size.                                           |
 | `PROMPT_CACHE_TTL_MS`      | `300000` (5 min)                | Prompt cache entry TTL.                                                |
@@ -635,6 +639,21 @@ The logging system writes to both stdout and rotated log files. All configuratio
 | Variable                              | Default | Description                                                                                                   |
 | ------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
 | `OMNIROUTE_RTK_TRUST_PROJECT_FILTERS` | unset   | Trust project `.rtk/filters.json` without a `.rtk/trust.json` hash. Use only in controlled local development. |
+
+### Memory Engine (plan 21)
+
+Embedding layer, vector store and reranking knobs for the persistent memory subsystem (`src/lib/memory/`).
+
+| Variable                        | Default                          | Description                                                                                                |
+| ------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `MEMORY_EMBEDDING_CACHE_TTL_MS` | `300000` (5 min)                 | TTL for the in-memory embedding cache (per source/model/dim signature).                                    |
+| `MEMORY_EMBEDDING_CACHE_MAX`    | `1000`                           | Max LRU entries kept in the embedding cache.                                                               |
+| `MEMORY_TRANSFORMERS_MODEL`     | `Xenova/all-MiniLM-L6-v2`        | HF repo id for the opt-in `@huggingface/transformers` local MiniLM pipeline (~23 MB int8, ~400 MB RAM).    |
+| `MEMORY_STATIC_MODEL`           | `minishlab/potion-base-8M`       | HF repo id for the static potion/Model2Vec lookup-table embedder. Downloaded lazily into the cache dir.    |
+| `MEMORY_STATIC_CACHE_DIR`       | `<DATA_DIR>/embeddings`          | Directory used to cache the static potion model files. Defaults under `DATA_DIR` when unset.               |
+| `MEMORY_VEC_TOP_K`              | `20`                             | Default top-K used by the `sqlite-vec` brute-force vector search inside `src/lib/memory/vectorStore.ts`.   |
+| `MEMORY_RRF_K`                  | `60`                             | Reciprocal Rank Fusion constant `k` for hybrid FTS5 + vector retrieval (sqlite-vec recipe).                |
+| `HF_HUB_ENDPOINT`               | `https://huggingface.co`         | Override Hugging Face Hub base URL used by `staticPotion.ts` (e.g. mirror endpoint for air-gapped setups). |
 
 ### Low-RAM Docker Example
 
@@ -724,6 +743,8 @@ Anthropic-compatible provider instead.
 | `CURSOR_STREAM_DEBUG`            | _(unset)_           | `open-sse/executors/cursor.ts`             | Backward-compatible alias of `CURSOR_DEBUG`.                                      |
 | `CURSOR_DUMP_FILE`               | _(unset)_           | `open-sse/executors/cursor.ts`             | Optional file path that receives raw decoded Cursor chunks when `CURSOR_DEBUG=1`. |
 | `CURSOR_STREAM_TIMEOUT_MS`       | `300000`            | `open-sse/executors/cursor.ts`             | Stream idle timeout (ms) for the Cursor executor.                                 |
+| `CURSOR_TOOL_DIRECTIVE`          | enabled (`!== "0"`) | `open-sse/executors/cursor.ts`             | Tool-commit directive that makes composer-2.5 reliably issue tool calls. Set `0` to disable. |
+| `CURSOR_IMAGE_FETCH_TIMEOUT_MS`  | `15000`             | `open-sse/utils/cursorImages.ts`           | Per-image fetch timeout (ms) for remote `image_url` vision input.                 |
 | `CURSOR_STATE_DB_PATH`           | _(probed)_          | `open-sse/utils/cursorVersionDetector.ts`  | Override the Cursor state DB lookup used for version detection.                   |
 | `CURSOR_TOKEN`                   | _(unset)_           | `scripts/ad-hoc/cursor-tap.cjs`            | Direct Cursor bearer token used by developer tooling.                             |
 | `OMNIROUTE_LOG_REQUEST_SHAPE`    | enabled (`!== "0"`) | `src/app/api/v1/chat/completions/route.ts` | Log content-type/length markers for large chat payloads. Set `"0"` to silence.    |
@@ -860,6 +881,24 @@ Provider quota endpoints, network tunnels (Tailscale, Ngrok, MITM debug proxy), 
 | `DB_BACKUP_MAX_FILES`                      | `20`                                                                        | `src/lib/db/backup.ts`                              | Maximum SQLite backup files retained on disk.                               |
 | `DB_BACKUP_RETENTION_DAYS`                 | `0`                                                                         | `src/lib/db/backup.ts`                              | Maximum age (days) of retained backups. `0` disables age-based pruning.     |
 | `OMNIROUTE_TLS_PROXY_URL`                  | _(unset)_                                                                   | `open-sse/services/chatgptTlsClient.ts`             | Override the TLS sidecar URL for tests. Production should leave unset.      |
+| `CONTAINER_HOST` | `docker` | `scripts/check-permissions.sh` | Container runtime hint for the entrypoint permission check. Set to `podman` under rootless Podman so the fix instructions use `podman unshare chown` instead of `sudo chown`. |
+| `QUOTA_STORE_DRIVER` | `sqlite` | `src/lib/quota/storeFactory.ts` | Quota-share consumption store backend: `sqlite` (default) or `redis`. |
+| `QUOTA_STORE_REDIS_URL` | _(unset)_ | `src/lib/quota/storeFactory.ts` | Redis connection string used when `QUOTA_STORE_DRIVER=redis` (e.g. `redis://localhost:6379`). |
+| `QUOTA_SATURATION_THRESHOLD` | `0.5` | `src/lib/quota/enforce.ts` | Pool saturation ratio (0..1); at/above it the pool enters strict mode (no borrowing). |
+| `QUOTA_SOFT_DEPRIORITIZE_FACTOR` | `0.7` | `open-sse/services/combo.ts` | Score multiplier (0..1) applied to a target when the soft quota policy deprioritizes it. |
+| `QUOTA_CONSUMPTION_RETENTION_DAYS` | `14` | `src/lib/db/quotaConsumption.ts` | Retention window (days) for `quota_consumption` buckets before GC (`gcQuotaConsumption`). |
+| `AGENTBRIDGE_UPSTREAM_CA_CERT` | _(unset)_ | `src/mitm/manager.ts` | Extra CA certificate (PEM) trusted for AgentBridge upstream TLS connections. |
+| `INSPECTOR_BUFFER_SIZE` | `1000` | `src/mitm/inspector/buffer.ts` | Max captured requests held in the Traffic Inspector ring buffer. |
+| `INSPECTOR_MAX_BODY_KB` | `1024` | `src/mitm/inspector/buffer.ts` | Max captured request/response body size (KB) before truncation. |
+| `INSPECTOR_HTTP_PROXY_PORT` | `8080` | `src/mitm/inspector/httpProxyServer.ts` | Local port for the Traffic Inspector HTTP proxy. |
+| `INSPECTOR_HTTP_PROXY_AUTOSTART` | `false` | `src/mitm/inspector/httpProxyServer.ts` | Auto-start the inspector HTTP proxy on boot. |
+| `INSPECTOR_TLS_INTERCEPT` | `false` | `src/lib/inspector/captureState.ts` | Enable TLS interception (MITM) for captured HTTPS traffic. |
+| `INSPECTOR_LLM_HOSTS_EXTRA` | _(unset)_ | `src/lib/inspector/captureState.ts` | Extra hostnames (comma-separated) treated as LLM endpoints for capture. |
+| `INSPECTOR_MASK_SECRETS` | `true` | `src/mitm/inspector/buffer.ts` | Mask secrets (auth headers / API keys) in captured traffic. |
+| `INSPECTOR_SYSTEM_PROXY_GUARD_MINUTES` | `30` | `src/app/api/tools/traffic-inspector/capture-modes/system-proxy/route.ts` | Minutes before the system-proxy guard auto-reverts OS proxy settings. |
+| `INSPECTOR_INTERNAL_INGEST_TOKEN` | _(auto)_ | `src/app/api/tools/traffic-inspector/internal/ingest/route.ts` | Token authenticating internal capture ingest into the inspector. |
+| `PLAYGROUND_COMPARE_MAX_COLUMNS` | `4` | `src/app/(dashboard)/dashboard/playground/` | Max number of side-by-side columns in the Playground compare mode. |
+| `PLAYGROUND_IMPROVE_PROMPT_DEFAULT_MODEL` | _(unset)_ | `src/app/(dashboard)/dashboard/playground/` | Default model for the Playground 'improve prompt' action (falls back to the active model when unset). |
 
 ---
 
@@ -875,6 +914,7 @@ value below unset in production deployments.
 | `OMNIROUTE_E2E_PASSWORD`              | falls back to `INITIAL_PASSWORD` | `scripts/dev/run-next-playwright.mjs`     | Admin password injected into the Playwright environment.                                 |
 | `OMNIROUTE_DISABLE_LOCAL_HEALTHCHECK` | `true`                           | `scripts/dev/run-next-playwright.mjs`     | Disable the local healthcheck poll during Playwright runs.                               |
 | `OMNIROUTE_DISABLE_TOKEN_HEALTHCHECK` | `true`                           | `scripts/dev/run-next-playwright.mjs`     | Disable the OAuth token healthcheck loop during tests.                                   |
+| `OMNIROUTE_HEALTHCHECK_SKIP_PROVIDERS` | _(unset)_                       | `src/lib/tokenHealthCheck.ts`             | Comma-separated providers excluded from the proactive token-refresh sweep (e.g. `codex,openai`). Targeted alternative to fully disabling the healthcheck — short-TTL providers keep refreshing while cascade providers stay reactive-only. |
 | `OMNIROUTE_HIDE_HEALTHCHECK_LOGS`     | `true`                           | `scripts/dev/run-next-playwright.mjs`     | Silence healthcheck noise in Playwright stdout.                                          |
 | `OMNIROUTE_PLAYWRIGHT_SKIP_BUILD`     | `0`                              | `scripts/dev/run-next-playwright.mjs`     | Skip the Next.js production build before Playwright starts (CI optimization).            |
 | `OMNIROUTE_SKIP_UNINSTALL_HOOK`       | `0`                              | `scripts/build/uninstall.mjs`             | Skip the OmniRoute uninstall hook (used by CI to keep `node_modules` intact).            |

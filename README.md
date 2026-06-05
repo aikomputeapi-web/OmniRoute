@@ -21,6 +21,16 @@
 [![14 Strategies](https://img.shields.io/badge/14-Routing_Strategies-0984E3?style=for-the-badge)](#-combos--the-flagship)
 [![$0 to start](https://img.shields.io/badge/%240-To_Start-FDCB6E?style=for-the-badge&logoColor=black)](#-quick-start)
 
+<br/>
+
+### 💬 Join the community on Discord
+
+[![Join our Discord](https://img.shields.io/badge/Join_our_Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/hmexnhgE)
+
+**Questions, provider tips, roadmap & support → [discord.gg/hmexnhgE](https://discord.gg/hmexnhgE)**
+
+<br/>
+
 <a href="https://trendshift.io/repositories/23589" target="_blank"><img src="https://trendshift.io/api/badge/repositories/23589" alt="diegosouzapw%2FOmniRoute | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
 [![npm](https://img.shields.io/npm/v/omniroute?logo=npm&style=flat-square)](https://www.npmjs.com/package/omniroute)
@@ -530,6 +540,22 @@ devbox run npm run dev
 
 📖 [Docker Guide](docs/guides/DOCKER_GUIDE.md) — Compose profiles, Caddy HTTPS, Cloudflare tunnels.
 
+**🦭 Podman**
+
+```bash
+# 1. Build the image
+podman build --target runner-base -t omniroute:base .
+
+# 2. Fix data directory permissions for rootless Podman
+mkdir -p data && podman unshare chown 1000:1000 ./data
+
+# 3. Set runtime in .env, then run (see contrib/podman/ for Quadlet)
+echo "CONTAINER_HOST=podman" >> .env
+podman compose --profile base up -d
+```
+
+📖 [Podman Guide](contrib/podman/README.md) — Quadlet setup, podman-compose, Quadlet.
+
 </details>
 
 <br/>
@@ -769,6 +795,7 @@ Compression: aggressive (~50%) → double your free quota · Cost: $0/mo
 | Document                                             | Description                                                    |
 | ---------------------------------------------------- | -------------------------------------------------------------- |
 | [Docker Guide](docs/guides/DOCKER_GUIDE.md)                 | Docker run, Compose profiles, Caddy HTTPS, tunnels, image tags |
+| [Podman Guide](contrib/podman/README.md)                   | Quadlet systemd integration, podman-compose, SELinux           |
 | [VM Deployment](docs/ops/VM_DEPLOYMENT_GUIDE.md)         | Complete guide: VM + nginx + Cloudflare setup                  |
 | [Fly.io Deployment](docs/ops/FLY_IO_DEPLOYMENT_GUIDE.md) | Deploy to Fly.io with persistent storage                       |
 | [Termux Guide](docs/guides/TERMUX_GUIDE.md)                 | Run OmniRoute on Android via Termux                            |
