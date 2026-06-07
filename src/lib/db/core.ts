@@ -117,6 +117,16 @@ export function isNativeSqliteLoadError(error: unknown): boolean {
   );
 }
 
+export function isSqliteDriverUnavailableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return (
+    message.includes("Nenhum driver SQLite disponível") ||
+    message.includes("Chame ensureDbInitialized() no startup") ||
+    message.includes("sql.js WASM ainda não foi pré-inicializado")
+  );
+}
+
 function getErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object" || !("code" in error)) return undefined;
   const code = (error as { code?: unknown }).code;
@@ -194,6 +204,7 @@ const SCHEMA_SQL = `
     "group" TEXT,
     max_concurrent INTEGER,
     quota_window_thresholds_json TEXT,
+    rate_limit_overrides_json TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
@@ -530,6 +541,10 @@ function ensureProviderConnectionsColumns(db: SqliteDatabase) {
     if (!columnNames.has("quota_window_thresholds_json")) {
       db.exec("ALTER TABLE provider_connections ADD COLUMN quota_window_thresholds_json TEXT");
       console.log("[DB] Added provider_connections.quota_window_thresholds_json column");
+    }
+    if (!columnNames.has("rate_limit_overrides_json")) {
+      db.exec("ALTER TABLE provider_connections ADD COLUMN rate_limit_overrides_json TEXT");
+      console.log("[DB] Added provider_connections.rate_limit_overrides_json column");
     }
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_pc_max_concurrent ON provider_connections(provider, max_concurrent)"
@@ -1249,7 +1264,11 @@ export function getDbInstance(): SqliteDatabase {
       console.warn("[DB] Could not probe existing DB:", message);
 
       // If the error is a Node module/ABI failure, throw it immediately to avoid renaming the database
-      if (isNativeSqliteLoadError(e) || message.includes("could not be found")) {
+      if (
+        isNativeSqliteLoadError(e) ||
+        isSqliteDriverUnavailableError(e) ||
+        message.includes("could not be found")
+      ) {
         throw e;
       }
   preservedCriticalState = captureCriticalDbState(sqliteFile);

@@ -59,6 +59,7 @@ export {
   getModelPreserveOpenAIDeveloperRole,
   getModelUpstreamExtraHeaders,
   getModelIsHidden,
+  setModelIsHidden,
 
   // Synced Available Models
   getSyncedAvailableModels,
@@ -614,3 +615,5 @@ export {
   listApiKeyContextSources,
 } from "./db/apiKeyContextSources";
 export type { ApiKeyContextSource } from "./db/apiKeyContextSources";
+
+export { sumUsageTokensThisMonth } from "./db/usageSummary";

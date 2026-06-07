@@ -2034,6 +2034,20 @@ export const updateProviderConnectionSchema = z
       ])
       .optional(),
     projectId: z.union([z.string(), z.null()]).optional(),
+    // Per-connection rate limit overrides — overrides the global RequestQueueSettings
+    // for this connection. Set to null to clear all overrides.
+    rateLimitOverrides: z
+      .union([
+        z.null(),
+        z.object({
+          rpm: z.coerce.number().int().min(0).max(1_000_000).optional(),
+          tpm: z.coerce.number().int().min(0).max(100_000_000).optional(),
+          tpd: z.coerce.number().int().min(0).max(10_000_000_000).optional(),
+          minTime: z.coerce.number().int().min(0).max(60_000).optional(),
+          maxConcurrent: z.coerce.number().int().min(0).max(10_000).optional(),
+        }),
+      ])
+      .optional(),
     proxyEnabled: z.boolean().optional(),
     perKeyProxyEnabled: z.boolean().optional(),
     // Partial patch of per-connection provider-specific settings (e.g. quota toggles)
@@ -2071,9 +2085,12 @@ export const providersBatchTestSchema = z
       "upstream-proxy",
       "cloud-agent",
       "ide",
+      "selected",
     ]),
     // Frontend may send null when mode != 'provider' — accept and treat as missing
     providerId: z.string().trim().min(1).nullable().optional(),
+    // Explicit connection IDs to test — required when mode=selected
+    connectionIds: z.array(z.string().trim().min(1)).max(100).nullable().optional(),
   })
   .superRefine((value, ctx) => {
     // Treat null same as undefined
@@ -2085,7 +2102,21 @@ export const providersBatchTestSchema = z
         path: ["providerId"],
       });
     }
+    const ids = value.connectionIds ?? null;
+    if (value.mode === "selected" && (!ids || ids.length === 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "connectionIds is required when mode=selected",
+        path: ["connectionIds"],
+      });
+    }
   });
+
+// PATCH /api/providers — bulk activate/deactivate selected connections
+export const batchUpdateProviderConnectionsSchema = z.object({
+  ids: z.array(z.string().trim().min(1)).min(1).max(100),
+  isActive: z.boolean(),
+});
 
 export const validateProviderApiKeySchema = z
   .object({
