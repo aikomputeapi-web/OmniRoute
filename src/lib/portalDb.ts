@@ -72,12 +72,22 @@ function buildPool(options: PortalDbOptions = {}): Pool | null {
   }
 
   try {
+    const env = (
+      globalThis as typeof globalThis & {
+        process?: { env?: Record<string, string | undefined> };
+      }
+    ).process?.env;
+    const poolMax = toNumber(env?.PORTAL_DATABASE_POOL_MAX, 50);
+
     sharedPool = new Pool({
       connectionString,
-      max: 5,
+      max: poolMax,
       idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 5_000,
+      connectionTimeoutMillis: 10_000,
       allowExitOnIdle: true,
+      // GCP Cloud SQL uses a self-signed cert; ssl accepted at runtime by pg
+      // but not reflected in @types/pg PoolConfig — cast to suppress TS error
+      ...({ ssl: { rejectUnauthorized: false } } as object),
     });
 
     sharedPool.on("error", (error) => {
@@ -152,7 +162,7 @@ export async function getUserPlan(
         FROM user_api_keys k
         INNER JOIN users u ON u.id = k.user_id
         LEFT JOIN plans p ON p.id = u.plan_id
-        WHERE k.omniroute_key_id = $1
+        WHERE k.omniroute_key_id = $1 AND k.is_active = true
         LIMIT 1
       `
         : `

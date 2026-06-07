@@ -65,7 +65,7 @@ const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits
     planName: "Free",
     limits: {
       requestsPerMinute: 5,
-      requestsPerDay: 100,
+      requestsPerDay: 20,
       requestsPerMonth: 50,
       limit5hTokens: 150_000,
       limitWeekTokens: 500_000,
@@ -75,8 +75,8 @@ const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits
   "pay-as-you-go": {
     planName: "Pay As You Go",
     limits: {
-      requestsPerMinute: 300,
-      requestsPerDay: 12000,
+      requestsPerMinute: 30,
+      requestsPerDay: 1200,
       requestsPerMonth: 0,
       limit5hTokens: 0,
       limitWeekTokens: 0,
@@ -86,8 +86,8 @@ const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits
   pro: {
     planName: "Pro",
     limits: {
-      requestsPerMinute: 60,
-      requestsPerDay: 3000,
+      requestsPerMinute: 30,
+      requestsPerDay: 300,
       requestsPerMonth: 300_000,
       limit5hTokens: 1_500_000,
       limitWeekTokens: 5_000_000,
@@ -97,8 +97,8 @@ const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits
   "max-5x": {
     planName: "Max 5x",
     limits: {
-      requestsPerMinute: 150,
-      requestsPerDay: 6000,
+      requestsPerMinute: 30,
+      requestsPerDay: 600,
       requestsPerMonth: 600_000,
       limit5hTokens: 7_500_000,
       limitWeekTokens: 25_000_000,
@@ -108,8 +108,8 @@ const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits
   "max-20x": {
     planName: "Max 20x",
     limits: {
-      requestsPerMinute: 300,
-      requestsPerDay: 12000,
+      requestsPerMinute: 30,
+      requestsPerDay: 1200,
       requestsPerMonth: 1_200_000,
       limit5hTokens: 30_000_000,
       limitWeekTokens: 100_000_000,
@@ -119,8 +119,8 @@ const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits
   "pro-max": {
     planName: "Pro Max",
     limits: {
-      requestsPerMinute: 300,
-      requestsPerDay: 12000,
+      requestsPerMinute: 30,
+      requestsPerDay: 1200,
       requestsPerMonth: 1_200_000,
       limit5hTokens: 30_000_000,
       limitWeekTokens: 100_000_000,

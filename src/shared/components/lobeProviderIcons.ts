@@ -449,6 +449,7 @@ const LOBE_PROVIDER_ALIASES = {
   zai: "ZAI",
   yi: "Yi",
   zhipu: "Zhipu",
+  verdent: "OpenAI",
 } satisfies Record<string, keyof typeof LOBE_ICON_COMPONENTS>;
 
 export function getLobeProviderIcon(

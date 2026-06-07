@@ -541,6 +541,20 @@ export class AntigravityExecutor extends BaseExecutor {
     return `${baseUrl}/v1internal:streamGenerateContent?alt=sse`;
   }
 
+  shouldRetry(status: number, urlIndex: number): boolean {
+    // Staging/pre-production URLs (e.g. daily-cloudcode-pa) can return 404 or 403
+    // when a project context or model is not available in that environment.
+    // Fallback to the next configured base URL (such as production).
+    return (
+      (status === HTTP_STATUS.RATE_LIMITED ||
+        status === HTTP_STATUS.NOT_FOUND ||
+        status === HTTP_STATUS.FORBIDDEN ||
+        status === HTTP_STATUS.BAD_GATEWAY ||
+        status === HTTP_STATUS.SERVICE_UNAVAILABLE) &&
+      urlIndex + 1 < this.getFallbackCount()
+    );
+  }
+
   buildHeaders(credentials: AntigravityCredentials, _stream = true): Record<string, string> {
     const raw = {
       "Content-Type": "application/json",

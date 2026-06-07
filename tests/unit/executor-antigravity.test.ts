@@ -916,3 +916,24 @@ test("AntigravityExecutor.transformRequest maps Claude models through Gemini con
   assert.equal(result.request.temperature, undefined);
   assert.equal(result.request.toolConfig, undefined);
 });
+
+test("AntigravityExecutor.shouldRetry returns true for 429, 404, 403, 502, 503 when there are remaining fallbacks", () => {
+  const executor = new AntigravityExecutor();
+  
+  // mock getFallbackCount to return 3
+  executor.getFallbackCount = () => 3;
+  
+  // Index 0: has remaining fallbacks (urlIndex + 1 < 3)
+  assert.equal(executor.shouldRetry(429, 0), true);
+  assert.equal(executor.shouldRetry(404, 0), true);
+  assert.equal(executor.shouldRetry(403, 0), true);
+  assert.equal(executor.shouldRetry(502, 0), true);
+  assert.equal(executor.shouldRetry(503, 0), true);
+  
+  // 400 Bad Request should not retry
+  assert.equal(executor.shouldRetry(400, 0), false);
+  
+  // Index 2: no remaining fallbacks (urlIndex + 1 = 3)
+  assert.equal(executor.shouldRetry(404, 2), false);
+});
+

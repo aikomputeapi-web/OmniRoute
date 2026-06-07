@@ -24,6 +24,7 @@ test("defaultUseUpstream429BreakerHints: self-hosted chat providers default fals
     "triton",
     "xinference",
     "oobabooga",
+    "verdent",
   ]) {
     assert.equal(defaultUseUpstream429BreakerHints(id), false, `expected false for ${id}`);
   }

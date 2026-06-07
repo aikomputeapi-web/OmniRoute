@@ -2487,6 +2487,19 @@ export const LOCAL_PROVIDERS = {
       "No API key required. Configure the local ComfyUI base URL (default: http://localhost:8188).",
     localDefault: "http://localhost:8188",
   },
+  verdent: {
+    id: "verdent",
+    alias: "verdent",
+    name: "Verdent",
+    icon: "psychology",
+    color: "#10B981",
+    textIcon: "VD",
+    website: "https://github.com/st0xr0/verdent2api",
+    authHint:
+      "API key required (use the Verdent sidecar api_token). Configure the local verdent2api base URL (default: http://localhost:8787/v1).",
+    localDefault: "http://localhost:8787/v1",
+    passthroughModels: true,
+  },
 };
 
 // Search Providers
@@ -2780,6 +2793,7 @@ export const SELF_HOSTED_CHAT_PROVIDER_IDS = new Set([
   "docker-model-runner",
   "xinference",
   "oobabooga",
+  "verdent",
 ]);
 
 export function isSelfHostedChatProvider(providerId: unknown): boolean {

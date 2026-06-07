@@ -16,6 +16,7 @@ import {
   isClaudeCodeCompatibleProvider,
   isOpenAICompatibleProvider,
   isAnthropicCompatibleProvider,
+  OAUTH_PROVIDERS,
 } from "@/shared/constants/providers";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { syncToCloud } from "@/lib/cloudSync";
@@ -100,7 +101,8 @@ export async function POST(request: Request) {
     const isValidProvider =
       isManagedProviderConnectionId(provider) ||
       isOpenAICompatibleProvider(provider) ||
-      isAnthropicCompatibleProvider(provider);
+      isAnthropicCompatibleProvider(provider) ||
+      provider in OAUTH_PROVIDERS;
 
     if (!isValidProvider) {
       return NextResponse.json({ error: "Invalid provider" }, { status: 400 });

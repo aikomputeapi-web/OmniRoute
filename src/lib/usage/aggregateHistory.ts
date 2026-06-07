@@ -37,11 +37,13 @@ export async function rollupDailyUsage(
   try {
     // Aggregate quota_snapshots by provider, model, and date
     const aggregateQuery = `
-      INSERT INTO daily_usage_summary (provider, model, date, total_requests, total_input_tokens, total_output_tokens, total_cost)
+      INSERT INTO daily_usage_summary (provider, model, date, api_key_id, api_key_name, total_requests, total_input_tokens, total_output_tokens, total_cost)
       SELECT 
         provider,
         COALESCE(json_extract(raw_data, '$.model'), 'unknown') as model,
         DATE(created_at) as date,
+        '' as api_key_id,
+        '' as api_key_name,
         COUNT(*) as total_requests,
         COALESCE(SUM(CAST(json_extract(raw_data, '$.input_tokens') AS INTEGER)), 0) as total_input_tokens,
         COALESCE(SUM(CAST(json_extract(raw_data, '$.output_tokens') AS INTEGER)), 0) as total_output_tokens,
@@ -49,7 +51,7 @@ export async function rollupDailyUsage(
       FROM quota_snapshots
       WHERE DATE(created_at) >= ? AND DATE(created_at) <= ?
       GROUP BY provider, model, DATE(created_at)
-      ON CONFLICT(provider, model, date) DO UPDATE SET
+      ON CONFLICT(provider, model, date, api_key_id, api_key_name) DO UPDATE SET
         total_requests = excluded.total_requests,
         total_input_tokens = excluded.total_input_tokens,
         total_output_tokens = excluded.total_output_tokens,
@@ -152,11 +154,13 @@ export async function rollupUsageHistoryBeforeDate(beforeDate: string): Promise<
 
   try {
     const aggregateQuery = `
-      INSERT INTO daily_usage_summary (provider, model, date, total_requests, total_input_tokens, total_output_tokens, total_cost)
+      INSERT INTO daily_usage_summary (provider, model, date, api_key_id, api_key_name, total_requests, total_input_tokens, total_output_tokens, total_cost)
       SELECT
         LOWER(provider) as provider,
         LOWER(model) as model,
         DATE(timestamp) as date,
+        COALESCE(api_key_id, '') as api_key_id,
+        COALESCE(api_key_name, '') as api_key_name,
         COUNT(*) as total_requests,
         COALESCE(SUM(tokens_input), 0) as total_input_tokens,
         COALESCE(SUM(tokens_output), 0) as total_output_tokens,
@@ -165,8 +169,8 @@ export async function rollupUsageHistoryBeforeDate(beforeDate: string): Promise<
       WHERE timestamp < ?
         AND provider IS NOT NULL AND provider != ''
         AND model IS NOT NULL AND model != ''
-      GROUP BY LOWER(provider), LOWER(model), DATE(timestamp)
-      ON CONFLICT(provider, model, date) DO UPDATE SET
+      GROUP BY LOWER(provider), LOWER(model), DATE(timestamp), api_key_id, api_key_name
+      ON CONFLICT(provider, model, date, api_key_id, api_key_name) DO UPDATE SET
         total_requests = daily_usage_summary.total_requests + excluded.total_requests,
         total_input_tokens = daily_usage_summary.total_input_tokens + excluded.total_input_tokens,
         total_output_tokens = daily_usage_summary.total_output_tokens + excluded.total_output_tokens

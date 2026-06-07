@@ -1604,23 +1604,6 @@ export async function handleChatCore({
     typeof body?.model === "string" && body.model.trim().length > 0 ? body.model : model;
   const isModelScope = () => isModelScopeProvider(provider, credentials?.providerSpecificData);
   const startTime = Date.now();
-  const isPremiumProvider =
-    provider === "openai" ||
-    provider === "anthropic" ||
-    provider === "claude" ||
-    provider === "kiro" ||
-    provider === "github" ||
-    provider === "antigravity" ||
-    provider === "codex" ||
-    provider === "gemini" ||
-    provider === "deepseek" ||
-    provider === "qwen" ||
-    provider === "nvidia" ||
-    provider === "cerebras" ||
-    provider === "azure-ai" ||
-    provider === "oci" ||
-    provider.startsWith("openai-compatible-") ||
-    provider.startsWith("anthropic-compatible-");
   let userPlanInfo: {
     userId: string;
     planId: string;
@@ -1934,33 +1917,44 @@ export async function handleChatCore({
   // Initialize rate limit settings from persisted DB (once, lazy)
   await initializeRateLimits();
 
-  if (isPremiumProvider && apiKeyInfo?.id) {
-    userPlanInfo = await getUserPlanForApiKey(apiKeyInfo.id).catch((error) => {
-      log?.error?.("USER_RATE_LIMIT", "Failed to resolve user plan for API key", {
-        apiKeyId: apiKeyInfo.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return null;
-    });
+  if (apiKeyInfo?.id) {
+    const isSystemOrAdmin =
+      apiKeyInfo.id === "env-key" ||
+      (Array.isArray(apiKeyInfo.scopes) &&
+        (apiKeyInfo.scopes.includes("manage") || apiKeyInfo.scopes.includes("admin")));
 
-    if (!userPlanInfo) {
-      log?.warn?.("USER_RATE_LIMIT", "No subscription plan found for API key", {
+    if (isSystemOrAdmin) {
+      log?.info?.("USER_RATE_LIMIT", "Bypassing subscription plan check for system/admin key", {
         apiKeyId: apiKeyInfo.id,
       });
-      return createErrorResult(
-        HTTP_STATUS.FORBIDDEN,
-        "No active subscription plan found for this API key"
-      );
+    } else {
+      userPlanInfo = await getUserPlanForApiKey(apiKeyInfo.id).catch((error) => {
+        log?.error?.("USER_RATE_LIMIT", "Failed to resolve user plan for API key", {
+          apiKeyId: apiKeyInfo.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
+
+      if (!userPlanInfo) {
+        log?.warn?.("USER_RATE_LIMIT", "No subscription plan found for API key", {
+          apiKeyId: apiKeyInfo.id,
+        });
+        return createErrorResult(
+          HTTP_STATUS.FORBIDDEN,
+          "No active subscription plan found for this API key"
+        );
+      }
+
+      log?.info?.("USER_RATE_LIMIT", "Resolved user plan for request", {
+        apiKeyId: apiKeyInfo.id,
+        userId: userPlanInfo.userId,
+        planId: userPlanInfo.planId,
+        planName: userPlanInfo.planName || null,
+        planSource: userPlanInfo.source || null,
+        active: userPlanInfo.active ?? null,
+      });
     }
-
-    log?.info?.("USER_RATE_LIMIT", "Resolved user plan for request", {
-      apiKeyId: apiKeyInfo.id,
-      userId: userPlanInfo.userId,
-      planId: userPlanInfo.planId,
-      planName: userPlanInfo.planName || null,
-      planSource: userPlanInfo.source || null,
-      active: userPlanInfo.active ?? null,
-    });
   }
   // T07: Inject connectionId into credentials so executors can rotate API keys
   // using providerSpecificData.extraApiKeys (API Key Round-Robin feature)
@@ -4354,7 +4348,7 @@ export async function handleChatCore({
   let claudePromptCacheLogMeta = null;
 
   try {
-    if (isPremiumProvider && userPlanInfo?.userId && userPlanInfo.planId) {
+    if (userPlanInfo?.userId && userPlanInfo.planId) {
       const { estimateInputTokens } = await import("../utils/usageTracking.ts");
       const inputTokensEstimate = estimateInputTokens(translatedBody);
 
@@ -4395,6 +4389,8 @@ export async function handleChatCore({
           success: false,
           status: HTTP_STATUS.RATE_LIMITED,
           error: `Rate limit exceeded for ${userPlanInfo.planName || userPlanInfo.planId} tier. Try again in ${userRateLimit.retryAfter || 60}s.`,
+          errorCode: "user_rate_limit_exceeded",
+          errorType: "user_rate_limit",
           response: new Response(
             JSON.stringify({
               error: {
@@ -5344,7 +5340,7 @@ export async function handleChatCore({
     if (onRequestSuccess) {
       await onRequestSuccess();
     }
-    if (isPremiumProvider && userPlanInfo?.userId) {
+    if (userPlanInfo?.userId) {
       let actualTokens = 0;
       if (usage) {
         const usageObj = usage as {
@@ -5797,7 +5793,7 @@ export async function handleChatCore({
   if (onRequestSuccess) {
     await onRequestSuccess();
   }
-  if (isPremiumProvider && userPlanInfo?.userId) {
+  if (userPlanInfo?.userId) {
     await userRateLimitManager.incrementUserUsage(userPlanInfo.userId).catch((error) => {
       log?.error?.("USER_RATE_LIMIT", "Failed to record successful stream usage", {
         userId: userPlanInfo.userId,

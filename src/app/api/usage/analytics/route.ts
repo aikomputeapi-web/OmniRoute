@@ -361,13 +361,11 @@ export async function GET(request: Request) {
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     // Build a UNION data source that merges recent raw rows with aggregated history.
-    // daily_usage_summary rows are included only when the query window extends before
-    // rawCutoffIso. They are gated off entirely when an api_key filter is active:
-    // daily_usage_summary does not store api_key/connection, so including it under a
-    // key filter would leak other keys' aggregated usage. With a key filter we serve
-    // only raw rows (older key-scoped data beyond retention is intentionally unavailable).
+    // daily_usage_summary rows are included when the query window extends before rawCutoffIso.
+    // Since migration 077 added api_key_id and api_key_name to daily_usage_summary, we can
+    // safely filter the aggregated leg by api key — no cross-key leakage occurs.
     const rawCutoffDate = rawCutoffIso.split("T")[0];
-    const needsAggregated = (!sinceIso || sinceIso < rawCutoffDate) && apiKeyIds.length === 0;
+    const needsAggregated = (!sinceIso || sinceIso < rawCutoffDate);
 
     // Raw leg: when aggregated rows are also included, lower-bound the raw leg at the
     // raw cutoff so the two legs never overlap (prevents double-counting).
@@ -383,7 +381,7 @@ export async function GET(request: Request) {
     const rawWhere = rawConditions.length > 0 ? `WHERE ${rawConditions.join(" AND ")}` : "";
 
     // Aggregated rows span the requested window but strictly before the raw cutoff,
-    // so they never overlap the raw leg above (no api_key filter — see note above).
+    // so they never overlap the raw leg above.
     const aggConditions: string[] = [];
     if (sinceIso) {
       // Use date comparison on the summary's date column (YYYY-MM-DD).
@@ -398,6 +396,7 @@ export async function GET(request: Request) {
     }
     aggConditions.push("date < @rawCutoffDate");
     params.rawCutoffDate = rawCutoffDate;
+    if (apiKeyWhere) aggConditions.push(apiKeyWhere);
     const aggWhere = aggConditions.length > 0 ? `WHERE ${aggConditions.join(" AND ")}` : "";
 
     // Unified source CTE: columns aligned to usage_history shape needed by analytics queries.
@@ -418,7 +417,8 @@ export async function GET(request: Request) {
             latency_ms,
             connection_id,
             api_key_id,
-            api_key_name
+            api_key_name,
+            1 as requests
           FROM usage_history
           ${rawWhere}
           UNION ALL
@@ -435,8 +435,9 @@ export async function GET(request: Request) {
             1 as success,
             0 as latency_ms,
             NULL as connection_id,
-            NULL as api_key_id,
-            NULL as api_key_name
+            api_key_id,
+            api_key_name,
+            total_requests as requests
           FROM daily_usage_summary
           ${aggWhere}
          )`
@@ -445,7 +446,8 @@ export async function GET(request: Request) {
             tokens_input, tokens_output,
             tokens_cache_read, tokens_cache_creation, tokens_reasoning,
             service_tier, success, latency_ms,
-            connection_id, api_key_id, api_key_name
+            connection_id, api_key_id, api_key_name,
+            1 as requests
           FROM usage_history
           ${whereClause}
          )`;
@@ -477,14 +479,14 @@ export async function GET(request: Request) {
       .prepare(
         `
         SELECT
-          COUNT(*) as totalRequests,
+          COALESCE(SUM(requests), 0) as totalRequests,
           COALESCE(SUM(tokens_input), 0) as promptTokens,
           COALESCE(SUM(tokens_output), 0) as completionTokens,
           COALESCE(SUM(tokens_input + tokens_output), 0) as totalTokens,
           COUNT(DISTINCT model) as uniqueModels,
           COUNT(DISTINCT connection_id) as uniqueAccounts,
           COUNT(DISTINCT COALESCE(NULLIF(api_key_id, ''), NULLIF(api_key_name, ''))) as uniqueApiKeys,
-          COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as successfulRequests,
+          COALESCE(SUM(CASE WHEN success = 1 THEN requests ELSE 0 END), 0) as successfulRequests,
           COALESCE(AVG(latency_ms), 0) as avgLatencyMs,
           COALESCE(MIN(timestamp), '') as firstRequest,
           COALESCE(MAX(timestamp), '') as lastRequest
@@ -499,7 +501,7 @@ export async function GET(request: Request) {
         `
         SELECT
           DATE(timestamp) as date,
-          COUNT(*) as requests,
+          COALESCE(SUM(requests), 0) as requests,
           COALESCE(SUM(tokens_input), 0) as promptTokens,
           COALESCE(SUM(tokens_output), 0) as completionTokens,
           COALESCE(SUM(tokens_input + tokens_output), 0) as totalTokens
@@ -573,7 +575,7 @@ export async function GET(request: Request) {
           LOWER(model) as model,
           LOWER(provider) as provider,
           COALESCE(NULLIF(service_tier, ''), 'standard') as serviceTier,
-          COUNT(*) as requests,
+          COALESCE(SUM(requests), 0) as requests,
           COALESCE(SUM(tokens_input), 0) as promptTokens,
           COALESCE(SUM(tokens_output), 0) as completionTokens,
           COALESCE(SUM(tokens_cache_read), 0) as cacheReadTokens,
@@ -581,7 +583,7 @@ export async function GET(request: Request) {
           COALESCE(SUM(tokens_reasoning), 0) as reasoningTokens,
           COALESCE(SUM(tokens_input + tokens_output), 0) as totalTokens,
           COALESCE(AVG(latency_ms), 0) as avgLatencyMs,
-          COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as successfulRequests,
+          COALESCE(SUM(CASE WHEN success = 1 THEN requests ELSE 0 END), 0) as successfulRequests,
           COALESCE(MAX(timestamp), '') as lastUsed
         FROM ${unifiedSource} AS _u
         ${unifiedWhere}
@@ -615,12 +617,12 @@ export async function GET(request: Request) {
         `
         SELECT
           LOWER(provider) as provider,
-          COUNT(*) as requests,
+          COALESCE(SUM(requests), 0) as requests,
           COALESCE(SUM(tokens_input), 0) as promptTokens,
           COALESCE(SUM(tokens_output), 0) as completionTokens,
           COALESCE(SUM(tokens_input + tokens_output), 0) as totalTokens,
           COALESCE(AVG(latency_ms), 0) as avgLatencyMs,
-          COALESCE(SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END), 0) as successfulRequests
+          COALESCE(SUM(CASE WHEN success = 1 THEN requests ELSE 0 END), 0) as successfulRequests
         FROM ${unifiedSource} AS _u
         ${unifiedWhere}
         GROUP BY LOWER(provider)
@@ -671,6 +673,12 @@ export async function GET(request: Request) {
       )
       .all(params) as Array<Record<string, unknown>>;
 
+    // Build a "has api key" guard used for both the rows and metadata queries below.
+    // Date-range and api-key-ID filters are already baked into unifiedSource, so we only
+    // need the non-null/non-empty guard on the outer SELECT.
+    const apiKeyHasKeyWhere =
+      "WHERE (api_key_id IS NOT NULL AND api_key_id != '') OR (api_key_name IS NOT NULL AND api_key_name != '')";
+    // Keep apiKeyWhereClause for the account/fallback queries that still hit usage_history directly.
     const apiKeyWhereClause = appendWhereCondition(
       whereClause,
       "(api_key_id IS NOT NULL AND api_key_id != '') OR (api_key_name IS NOT NULL AND api_key_name != '')"
@@ -684,15 +692,15 @@ export async function GET(request: Request) {
           LOWER(provider) as provider,
           LOWER(model) as model,
           COALESCE(NULLIF(service_tier, ''), 'standard') as serviceTier,
-          COUNT(*) as requests,
+          COALESCE(SUM(requests), 0) as requests,
           COALESCE(SUM(tokens_input), 0) as promptTokens,
           COALESCE(SUM(tokens_output), 0) as completionTokens,
           COALESCE(SUM(tokens_cache_read), 0) as cacheReadTokens,
           COALESCE(SUM(tokens_cache_creation), 0) as cacheCreationTokens,
           COALESCE(SUM(tokens_reasoning), 0) as reasoningTokens,
           COALESCE(SUM(tokens_input + tokens_output), 0) as totalTokens
-        FROM usage_history
-        ${apiKeyWhereClause}
+        FROM ${unifiedSource} AS _u
+        ${apiKeyHasKeyWhere}
         GROUP BY COALESCE(NULLIF(api_key_id, ''), NULLIF(api_key_name, ''), 'unknown'), NULLIF(api_key_id, ''), LOWER(provider), LOWER(model), serviceTier
       `
       )
@@ -706,7 +714,7 @@ export async function GET(request: Request) {
           LOWER(provider) as provider,
           LOWER(model) as model,
           COALESCE(NULLIF(service_tier, ''), 'standard') as serviceTier,
-          COUNT(*) as requests,
+          COALESCE(SUM(requests), 0) as requests,
           COALESCE(SUM(tokens_input), 0) as promptTokens,
           COALESCE(SUM(tokens_output), 0) as completionTokens,
           COALESCE(SUM(tokens_cache_read), 0) as cacheReadTokens,
@@ -728,8 +736,8 @@ export async function GET(request: Request) {
           NULLIF(api_key_name, '') as apiKeyName,
           COALESCE(NULLIF(api_key_id, ''), NULLIF(api_key_name, ''), 'unknown') as apiKeyGroupKey,
           MAX(timestamp) as lastUsed
-        FROM usage_history
-        ${apiKeyWhereClause}
+        FROM ${unifiedSource} AS _u
+        ${apiKeyHasKeyWhere}
         GROUP BY NULLIF(api_key_id, ''), NULLIF(api_key_name, '')
         ORDER BY lastUsed DESC
       `
@@ -763,7 +771,7 @@ export async function GET(request: Request) {
           SELECT
             DATE(timestamp) as date,
             strftime('%w', timestamp) as dayOfWeek,
-            COUNT(*) as requests,
+            COALESCE(SUM(requests), 0) as requests,
             COALESCE(SUM(tokens_input + tokens_output), 0) as totalTokens
           FROM ${unifiedSource} AS _u
           ${unifiedWhere}
@@ -1223,10 +1231,10 @@ export async function GET(request: Request) {
         const presetParams: Record<string, string> = {};
 
         // Build unified source for preset cost queries (same UNION logic as main query).
-        // Aggregated rows are gated off when an api_key filter is active (leakage) and
-        // bounded strictly before the raw cutoff (overlap / double-count) — see main query.
-        const presetNeedsAggregated =
-          (!presetSinceIso || presetSinceIso < rawCutoffDate) && apiKeyIds.length === 0;
+        // daily_usage_summary now stores api_key_id/api_key_name (migration 077), so the
+        // aggregated leg is safe to include even when an api_key filter is active.
+        // The agg leg is still bounded strictly before the raw cutoff to prevent double-counting.
+        const presetNeedsAggregated = !presetSinceIso || presetSinceIso < rawCutoffDate;
 
         const presetRawConds: string[] = [];
         if (presetNeedsAggregated) {
@@ -1258,7 +1266,8 @@ export async function GET(request: Request) {
           ? `(
               SELECT timestamp, provider, model, service_tier,
                 tokens_input, tokens_output,
-                tokens_cache_read, tokens_cache_creation, tokens_reasoning
+                tokens_cache_read, tokens_cache_creation, tokens_reasoning,
+                1 as requests
               FROM usage_history
               ${presetRawWhere}
               UNION ALL
@@ -1270,13 +1279,15 @@ export async function GET(request: Request) {
                 total_output_tokens as tokens_output,
                 0 as tokens_cache_read,
                 0 as tokens_cache_creation,
-                0 as tokens_reasoning
+                0 as tokens_reasoning,
+                total_requests as requests
               FROM daily_usage_summary
               ${presetAggWhere}
             )`
           : `(SELECT timestamp, provider, model, service_tier,
                 tokens_input, tokens_output,
-                tokens_cache_read, tokens_cache_creation, tokens_reasoning
+                tokens_cache_read, tokens_cache_creation, tokens_reasoning,
+                1 as requests
               FROM usage_history
               ${presetRawWhere}
             )`;

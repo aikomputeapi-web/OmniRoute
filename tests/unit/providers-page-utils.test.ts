@@ -439,6 +439,8 @@ test("grok-web taxonomy stays web-cookie only and does not leak into api-key ent
   assert.equal("lemonade" in providers.LOCAL_PROVIDERS, true);
   assert.equal("comfyui" in providers.APIKEY_PROVIDERS, false);
   assert.equal("comfyui" in providers.LOCAL_PROVIDERS, true);
+  assert.equal("verdent" in providers.APIKEY_PROVIDERS, false);
+  assert.equal("verdent" in providers.LOCAL_PROVIDERS, true);
   assert.equal("blackbox-web" in providers.APIKEY_PROVIDERS, false);
   assert.equal("blackbox-web" in providers.WEB_COOKIE_PROVIDERS, true);
   assert.equal("muse-spark-web" in providers.APIKEY_PROVIDERS, false);
@@ -495,6 +497,10 @@ test("grok-web taxonomy stays web-cookie only and does not leak into api-key ent
   );
   assert.equal(
     apiKeyEntries.some((entry) => entry.providerId === "lemonade"),
+    false
+  );
+  assert.equal(
+    apiKeyEntries.some((entry) => entry.providerId === "verdent"),
     false
   );
   assert.equal(
@@ -607,6 +613,10 @@ test("grok-web taxonomy stays web-cookie only and does not leak into api-key ent
   );
   assert.equal(
     localEntries.some((entry) => entry.providerId === "lemonade"),
+    true
+  );
+  assert.equal(
+    localEntries.some((entry) => entry.providerId === "verdent"),
     true
   );
   assert.equal(

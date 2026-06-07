@@ -834,6 +834,12 @@ async function getProviderSearchPool(provider: string): Promise<string[]> {
   if (provider === "nvidia_nim") {
     return ["nvidia_nim", "nvidia"];
   }
+  if (provider === "antigravity") {
+    return ["antigravity", "agy"];
+  }
+  if (provider === "agy") {
+    return ["agy", "antigravity"];
+  }
 
   const searchPool = new Set([provider, canonicalProvider, canonicalAlias].filter(Boolean));
 
@@ -2176,8 +2182,11 @@ export async function getUserPlanForApiKey(apiKeyId: string): Promise<UserPlan |
   if (!normalizedApiKeyId) return null;
 
   const cached = userPlanCache.get(normalizedApiKeyId);
-  if (cached && Date.now() - cached.timestamp < USER_PLAN_CACHE_TTL_MS) {
-    return cached.value;
+  if (cached) {
+    const ttl = cached.value ? USER_PLAN_CACHE_TTL_MS : 5000; // Cache failures for only 5 seconds
+    if (Date.now() - cached.timestamp < ttl) {
+      return cached.value;
+    }
   }
 
   try {
