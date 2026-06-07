@@ -171,6 +171,12 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "059",
     toName: "manifest_routing",
   },
+  {
+    fromVersion: "077",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "095",
+    toName: "daily_usage_summary_api_keys",
+  },
 ] as const;
 
 const LEGACY_VERSION_SLOT_MIGRATIONS = [
@@ -504,6 +510,10 @@ function isSchemaAlreadyApplied(
       // was dropped on integration; this canonical migration creates the table
       // that recordPluginExecution()/getPluginAnalytics() rely on.
       return hasTable(db, "plugin_analytics");
+    case "095":
+      // daily_usage_summary_api_keys migration (renumbered 077 → 095 to avoid
+      // collision with 077_api_key_stream_default_mode).
+      return hasColumn(db, "daily_usage_summary", "api_key_id");
     default:
       return false;
   }
