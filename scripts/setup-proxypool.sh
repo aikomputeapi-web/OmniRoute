@@ -13,7 +13,7 @@ fi
 
 # Start proxy_pool service
 echo "📦 Starting proxy_pool service..."
-docker-compose -f docker-compose.proxypool.yml up -d
+docker compose -f docker-compose.proxypool.yml up -d
 
 # Wait for service to be ready
 echo "⏳ Waiting for proxy_pool to be ready..."
