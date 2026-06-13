@@ -14,8 +14,58 @@ sudo touch /var/log/omniroute-proxy-manager.log
 sudo chmod 666 /var/log/omniroute-proxy-manager.log
 
 echo "✅ Log file created"
+echo ""
+echo "🔑 API Key Setup Required"
+echo "The automation script needs an API key with 'manage' scope."
+echo ""
+echo "Steps to create:"
+echo "  1. Open OmniRoute Dashboard: http://localhost:3000/dashboard" 
+echo "  2. Go to Settings → API Keys"
+echo "  3. Create New API Key"
+echo "  4. Enable the 'manage' scope checkbox"
+echo "  5. Copy the generated key"
+echo ""
 
-# Option 1: Setup cron job (recommended for simplicity)
+read -p "Do you have an API key ready? (yes/no) [no]: " HAS_KEY
+HAS_KEY=${HAS_KEY:-no}
+
+if [[ "$HAS_KEY" != "yes" ]]; then
+    echo ""
+    echo "⚠️  Please create the API key first, then run this setup again."
+    echo ""
+    echo "Quick test (once you have the key):"
+    echo "  export OMNIROUTE_API_KEY=your-key-here"
+    echo "  $OMNIROUTE_DIR/scripts/auto-proxy-manager.sh"
+    echo ""
+    exit 0
+fi
+
+read -p "Enter your API key: " API_KEY
+
+if [ -z "$API_KEY" ]; then
+    echo "❌ No API key provided. Exiting."
+    exit 1
+fi
+
+# Add to .env if not already there
+if grep -q "^OMNIROUTE_API_KEY=" "$OMNIROUTE_DIR/.env" 2>/dev/null; then
+    echo "⚠️  OMNIROUTE_API_KEY already exists in .env"
+    read -p "Replace it? (yes/no) [no]: " REPLACE
+    if [[ "$REPLACE" == "yes" ]]; then
+        sed -i "s|^OMNIROUTE_API_KEY=.*|OMNIROUTE_API_KEY=$API_KEY|" "$OMNIROUTE_DIR/.env"
+        echo "✅ Updated OMNIROUTE_API_KEY in .env"
+    fi
+else
+    echo "" >> "$OMNIROUTE_DIR/.env"
+    echo "# Auto Proxy Manager API Key" >> "$OMNIROUTE_DIR/.env"
+    echo "OMNIROUTE_API_KEY=$API_KEY" >> "$OMNIROUTE_DIR/.env"
+    echo "✅ Added OMNIROUTE_API_KEY to .env"
+fi
+
+# Export for immediate use
+export OMNIROUTE_API_KEY="$API_KEY"
+
+echo ""
 read -p "Setup automatic proxy management? (yes/no) [yes]: " SETUP_AUTO
 SETUP_AUTO=${SETUP_AUTO:-yes}
 
@@ -26,7 +76,7 @@ if [[ "$SETUP_AUTO" == "yes" ]]; then
     else
         # Add cron job to run every 2 hours
         (crontab -l 2>/dev/null; echo "# OmniRoute Auto Proxy Manager - Runs every 2 hours") | crontab -
-        (crontab -l 2>/dev/null; echo "0 */2 * * * $OMNIROUTE_DIR/scripts/auto-proxy-manager.sh >> /var/log/omniroute-proxy-manager.log 2>&1") | crontab -
+        (crontab -l 2>/dev/null; echo "0 */2 * * * export OMNIROUTE_API_KEY='$API_KEY' && $OMNIROUTE_DIR/scripts/auto-proxy-manager.sh >> /var/log/omniroute-proxy-manager.log 2>&1") | crontab -
         echo "✅ Cron job added (runs every 2 hours)"
     fi
 
@@ -38,10 +88,11 @@ else
     echo "⏭️  Skipped automatic setup"
     echo ""
     echo "To run manually:"
+    echo "  export OMNIROUTE_API_KEY='$API_KEY'"
     echo "  $OMNIROUTE_DIR/scripts/auto-proxy-manager.sh"
     echo ""
     echo "To setup cron manually, add this line:"
-    echo "  0 */2 * * * $OMNIROUTE_DIR/scripts/auto-proxy-manager.sh >> /var/log/omniroute-proxy-manager.log 2>&1"
+    echo "  0 */2 * * * export OMNIROUTE_API_KEY='$API_KEY' && $OMNIROUTE_DIR/scripts/auto-proxy-manager.sh >> /var/log/omniroute-proxy-manager.log 2>&1"
 fi
 
 echo ""
