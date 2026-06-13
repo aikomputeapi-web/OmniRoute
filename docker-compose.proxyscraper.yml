@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  proxy-scraper:
+    image: python:3.11-slim
+    container_name: omniroute-proxy-scraper
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./proxy_scraper_data:/app/data
+      - ./proxy_scraper_config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: >
+      bash -c "
+      pip install --no-cache-dir proxy-scraper-checker &&
+      mkdir -p /app/data/proxies &&
+      cd /app/data &&
+      while true; do
+        echo '[$(date)] Starting proxy scrape and validation...' &&
+        proxy-scraper-checker --http --socks4 --socks5 --timeout 5 --max-tries 2 &&
+        echo '[$(date)] Scrape complete. Sleeping for 1 hour...' &&
+        sleep 3600
+      done
+      "
+    networks:
+      - omniroute-network
+
+networks:
+  omniroute-network:
+    driver: bridge

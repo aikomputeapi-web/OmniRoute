@@ -3,12 +3,14 @@ import { OneproxyProvider } from "./oneproxy";
 import { ProxiflyProvider } from "./proxifly";
 import { IplocateProvider } from "./iplocate";
 import { ProxyPoolProvider } from "./proxypool";
+import { ProxyScraperProvider } from "./proxyscraper";
 
 const ALL_PROVIDERS: FreeProxyProvider[] = [
   new OneproxyProvider(),
   new ProxiflyProvider(),
   new IplocateProvider(),
   new ProxyPoolProvider(),
+  new ProxyScraperProvider(),
 ];
 
 export function getProvider(id: FreeProxySourceId): FreeProxyProvider | undefined {

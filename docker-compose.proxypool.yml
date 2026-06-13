@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  proxy_pool:
+    image: jhao104/proxy_pool:latest
+    container_name: proxy_pool
+    ports:
+      - "5010:5010"
+    environment:
+      - DB_CONN=redis://redis:6379/0
+    volumes:
+      - ./proxy_pool_config:/app/config
+    networks:
+      - omniroute-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    container_name: proxy_pool_redis
+    networks:
+      - omniroute-network
+    restart: unless-stopped
+
+networks:
+  omniroute-network:
+    driver: bridge
