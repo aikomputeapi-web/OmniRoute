@@ -96,12 +96,55 @@ const ALLOWED_NVIDIA_MODELS = new Set([
 
 const FORCED_CONSOLIDATION_MODELS = new Set([
   "claude-sonnet-4-6",
-  "claude-opus-4-7",
-  "minimax-2.7",
-  "kimi-k2.6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+  "minimax-m3",
+  "kimi-k2",
   "gpt-oss-120b",
   "gpt-oss-20b",
-  "glm-5.1",
+  "glm-5",
+  "gpt-5-5",
+  "gpt-5-4",
+  "gpt-5-4-mini",
+  "gpt-5-3",
+  "gpt-4o",
+  "o3-mini",
+  "deepseek-v3",
+  "deepseek-r1",
+  "gemini-3-1-pro",
+  "gemini-3-flash",
+  "gemini-3-1-flash-lite",
+  "gemini-2-5-pro",
+  "gemini-2-5-flash",
+  "qwen3-coder",
+  "llama-4-scout",
+  "mistral-small",
+  "ling-2-6",
+  "qwen3-6",
+]);
+
+// Models that should never appear in the customer-facing /v1/models list
+const BLOCKLISTED_ROOT_IDS = new Set([
+  "codex-auto-review",
+  "big-pickle",
+  "nemotron-3-super-free",
+  "trinity-large-preview-free",
+  "pepper-1",
+  "gemini-pro-agent",
+  "gpt-5-2",   // superceded
+]);
+
+// Provider prefixes whose models should be hidden entirely unless consolidated
+const HIDDEN_PROVIDER_PREFIXES = new Set([
+  "veo-free",
+  "veoaifree-web",
+  "chipotle",
+  "pepper",
+  "ddgw",
+  "duckduckgo-web",
+  "theoldllm",
+  "tllm",
+  "oc",
 ]);
 
 /**
@@ -119,28 +162,99 @@ function sanitizeComboName(rootId: string): string {
 
 export function getCanonicalRootId(rootId: string): string {
   const lower = rootId.toLowerCase();
+
+  // ── Claude family ──────────────────────────────────────────
   if (lower.includes("claude") && lower.includes("sonnet")) {
     return "claude-sonnet-4-6";
   }
   if (lower.includes("claude") && lower.includes("opus")) {
-    return "claude-opus-4-7";
+    return "claude-opus-4-6";
   }
-  if (lower.includes("minimax")) {
-    return "minimax-2.7";
+  if (lower.includes("claude") && (lower.includes("haiku") || lower.includes("haiku"))) {
+    return "claude-haiku-4-5";
   }
-  if (lower.includes("kimi") && (lower.includes("k2.6") || lower.includes("k2-6"))) {
-    return "kimi-k2.6";
+
+  // ── GPT family ─────────────────────────────────────────────
+  if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
+  if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
+  if (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5") || lower === "gpt-5.5") {
+    return "gpt-5-5";
   }
-  if (lower.includes("gpt-oss-120b")) {
-    return "gpt-oss-120b";
+  if (
+    (lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) &&
+    !lower.includes("mini")
+  ) {
+    return "gpt-5-4";
   }
-  if (lower.includes("gpt-oss-20b")) {
-    return "gpt-oss-20b";
+  if (
+    lower.includes("gpt-5.4-mini") || lower.includes("gpt-5-4-mini") ||
+    lower.includes("gpt-5-mini") || lower.includes("gpt-5.mini") ||
+    lower.includes("gpt-4o-mini")
+  ) {
+    return "gpt-5-4-mini";
   }
-  if (lower.includes("glm") && lower.includes("5.1")) {
-    return "glm-5.1";
+  if (lower.includes("gpt-5.3") || lower.includes("gpt-5-3")) {
+    return "gpt-5-3";
   }
+  if (lower.includes("gpt-4o") || lower.includes("gpt_4o")) {
+    return "gpt-4o";
+  }
+
+  // ── Gemini family ──────────────────────────────────────────
+  if (
+    lower.includes("gemini") && lower.includes("pro") &&
+    !lower.includes("flash") && !lower.includes("lite") && !lower.includes("agent")
+  ) {
+    // gemini 3.1 pro variants
+    if (lower.includes("3.1") || lower.includes("3-1") || lower.includes("3_pro") || lower.includes("gemini_3_pro")) {
+      return "gemini-3-1-pro";
+    }
+    if (lower.includes("2.5") || lower.includes("2-5")) {
+      return "gemini-2-5-pro";
+    }
+    return "gemini-3-1-pro";
+  }
+  if (lower.includes("gemini") && lower.includes("flash") && lower.includes("lite")) {
+    return "gemini-3-1-flash-lite";
+  }
+  if (lower.includes("gemini") && lower.includes("flash") && !lower.includes("lite")) {
+    if (lower.includes("2.5") || lower.includes("2-5")) {
+      return "gemini-2-5-flash";
+    }
+    return "gemini-3-flash";
+  }
+
+  // ── DeepSeek family ────────────────────────────────────────
+  if (lower.includes("deepseek") && lower.includes("r1")) return "deepseek-r1";
+  if (lower.includes("deepseek")) return "deepseek-v3";
+
+  // ── Reasoning ──────────────────────────────────────────────
+  if (lower.includes("o3-mini") || lower === "o3mini") return "o3-mini";
+
+  // ── Open weights ───────────────────────────────────────────
+  if (lower.includes("llama") && lower.includes("scout")) return "llama-4-scout";
+  if (lower.includes("mistral") && lower.includes("small")) return "mistral-small";
+  if (lower.includes("ling") && (lower.includes("2.6") || lower.includes("2-6"))) return "ling-2-6";
+  if (lower.includes("qwen") && !lower.includes("coder")) return "qwen3-6";
+
+  // ── Other families ─────────────────────────────────────────
+  if (lower.includes("minimax")) return "minimax-m3";
+  if (lower.includes("kimi")) return "kimi-k2";
+  if (lower.includes("glm")) return "glm-5";
+  if (lower.includes("qwen") && lower.includes("coder")) return "qwen3-coder";
+
   return rootId;
+}
+
+/** Returns true if a model should be completely excluded from the customer catalog */
+export function isBlocklistedForCatalog(rootId: string, providerPrefix: string): boolean {
+  if (HIDDEN_PROVIDER_PREFIXES.has(providerPrefix)) return true;
+  if (BLOCKLISTED_ROOT_IDS.has(rootId)) return true;
+  const lower = rootId.toLowerCase();
+  if (lower.includes("codex-auto-review") || lower.includes("codex_auto")) return true;
+  if (lower === "gpt-5-2" || lower === "gpt-5.2") return true;
+  if (lower.includes("codex-spark") || lower.includes("3-codex") || lower.includes("3.codex")) return true;
+  return false;
 }
 
 function parseVersion(id: string) {
@@ -636,8 +750,11 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
           } catch {}
         }
       }
-      if (rootId === "kimi-k2.6") {
-        const extraPatterns = ["moonshotai/kimi-k2.6:free", "moonshotai/kimi-k2.6", "kimi-k2.6"];
+      if (rootId === "kimi-k2") {
+        const extraPatterns = [
+          "kimi-k2", "kimi-k2.6", "kimi-k2-6",
+          "moonshotai/kimi-k2.6:free", "moonshotai/kimi-k2.6",
+        ];
         for (const p of extraPatterns) {
           try {
             await createModelComboMapping({
@@ -650,8 +767,11 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
           } catch {}
         }
       }
-      if (rootId === "minimax-2.7") {
-        const extraPatterns = ["minimax/minimax-m2.5:free", "minimaxai/minimax-m2.7", "minimax-2.7", "minimax-m2.5", "minimax-m2.7"];
+      if (rootId === "minimax-m3") {
+        const extraPatterns = [
+          "minimax-m3", "minimax-m2", "minimax-m2.1", "minimax-m2.5", "minimax-m2.7",
+          "minimax/minimax-m2.5:free", "minimaxai/minimax-m2.7",
+        ];
         for (const p of extraPatterns) {
           try {
             await createModelComboMapping({
@@ -664,8 +784,8 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
           } catch {}
         }
       }
-      if (rootId === "glm-5.1") {
-        const extraPatterns = ["z-ai/glm-5.1", "glm-5.1"];
+      if (rootId === "glm-5") {
+        const extraPatterns = ["glm-5", "glm-5.1", "z-ai/glm-5.1"];
         for (const p of extraPatterns) {
           try {
             await createModelComboMapping({
@@ -695,10 +815,12 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
           } catch {}
         }
       }
-      if (rootId === "claude-opus-4-7") {
+      if (rootId === "claude-opus-4-6") {
         const extraPatterns = [
-          "claude-opus-4-7", "claude-opus-4.7", "claude-opus-4.6", "claude-opus-4.5",
-          "claude-opus-4-5-20251101", "claude-opus-4-7-thinking", "claude-opus-4.7-thinking"
+          "claude-opus-4-6", "claude-opus-4.6", "claude-opus-4-7", "claude-opus-4.7",
+          "claude-opus-4.5", "claude-opus-4-5-20251101",
+          "claude-opus-4-6-thinking", "claude-opus-4.6-thinking",
+          "claude-opus-4-7-thinking", "claude-opus-4.7-thinking",
         ];
         for (const p of extraPatterns) {
           try {

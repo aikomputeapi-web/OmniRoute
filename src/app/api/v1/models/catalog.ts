@@ -77,12 +77,55 @@ const ALLOWED_NVIDIA_MODELS = new Set([
 
 const FORCED_CONSOLIDATION_MODELS = new Set([
   "claude-sonnet-4-6",
-  "claude-opus-4-7",
-  "minimax-2.7",
-  "kimi-k2.6",
+  "claude-opus-4-6",
+  "claude-haiku-4-5",
+  "minimax-m3",
+  "kimi-k2",
   "gpt-oss-120b",
   "gpt-oss-20b",
-  "glm-5.1",
+  "glm-5",
+  "gpt-5-5",
+  "gpt-5-4",
+  "gpt-5-4-mini",
+  "gpt-5-3",
+  "gpt-4o",
+  "o3-mini",
+  "deepseek-v3",
+  "deepseek-r1",
+  "gemini-3-1-pro",
+  "gemini-3-flash",
+  "gemini-3-1-flash-lite",
+  "gemini-2-5-pro",
+  "gemini-2-5-flash",
+  "qwen3-coder",
+  "llama-4-scout",
+  "mistral-small",
+  "ling-2-6",
+  "qwen3-6",
+]);
+
+const BLOCKLISTED_ROOT_IDS = new Set([
+  "codex-auto-review",
+  "big-pickle",
+  "nemotron-3-super-free",
+  "trinity-large-preview-free",
+  "pepper-1",
+  "gemini-pro-agent",
+  "gpt-5-2",
+]);
+
+const HIDDEN_PROVIDER_PREFIXES = new Set([
+  "veo-free",
+  "veoaifree-web",
+  "chipotle",
+  "pepper",
+  // These providers expose models we want cleaned/consolidated — suppress raw entries
+  // that weren't picked up by the virtual catalog generator
+  "ddgw",
+  "duckduckgo-web",
+  "theoldllm",
+  "tllm",
+  "oc",
 ]);
 
 type ComboCatalogTarget = {
@@ -1469,44 +1512,88 @@ export async function getUnifiedModelsResponse(
 
       const getCanonicalRootId = (rootId: string): string => {
         const lower = rootId.toLowerCase();
-        if (lower.includes("claude") && lower.includes("sonnet")) {
-          return "claude-sonnet-4-6";
+
+        // ── Claude family ──────────────────────────────────────────
+        if (lower.includes("claude") && lower.includes("sonnet")) return "claude-sonnet-4-6";
+        if (lower.includes("claude") && lower.includes("opus")) return "claude-opus-4-6";
+        if (lower.includes("claude") && lower.includes("haiku")) return "claude-haiku-4-5";
+
+        // ── GPT family ─────────────────────────────────────────────
+        if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
+        if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
+        if (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) return "gpt-5-5";
+        if ((lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) && !lower.includes("mini")) return "gpt-5-4";
+        if (lower.includes("gpt-5.4-mini") || lower.includes("gpt-5-4-mini") || lower.includes("gpt-5-mini") || lower.includes("gpt-4o-mini")) return "gpt-5-4-mini";
+        if (lower.includes("gpt-5.3") || lower.includes("gpt-5-3")) return "gpt-5-3";
+        if (lower.includes("gpt-4o") || lower.includes("gpt_4o")) return "gpt-4o";
+
+        // ── Gemini family ──────────────────────────────────────────
+        if (lower.includes("gemini") && lower.includes("pro") && !lower.includes("flash") && !lower.includes("lite") && !lower.includes("agent")) {
+          if (lower.includes("2.5") || lower.includes("2-5")) return "gemini-2-5-pro";
+          return "gemini-3-1-pro";
         }
-        if (lower.includes("claude") && lower.includes("opus")) {
-          return "claude-opus-4-7";
+        if (lower.includes("gemini") && lower.includes("flash") && lower.includes("lite")) return "gemini-3-1-flash-lite";
+        if (lower.includes("gemini") && lower.includes("flash") && !lower.includes("lite")) {
+          if (lower.includes("2.5") || lower.includes("2-5")) return "gemini-2-5-flash";
+          return "gemini-3-flash";
         }
-        if (lower.includes("minimax")) {
-          return "minimax-2.7";
-        }
-        if (lower.includes("kimi") && (lower.includes("k2.6") || lower.includes("k2-6"))) {
-          return "kimi-k2.6";
-        }
-        if (lower.includes("gpt-oss-120b")) {
-          return "gpt-oss-120b";
-        }
-        if (lower.includes("gpt-oss-20b")) {
-          return "gpt-oss-20b";
-        }
-        if (lower.includes("glm") && lower.includes("5.1")) {
-          return "glm-5.1";
-        }
+
+        // ── DeepSeek family ────────────────────────────────────────
+        if (lower.includes("deepseek") && lower.includes("r1")) return "deepseek-r1";
+        if (lower.includes("deepseek")) return "deepseek-v3";
+
+        // ── Reasoning ──────────────────────────────────────────────
+        if (lower.includes("o3-mini") || lower === "o3mini") return "o3-mini";
+
+        // ── Open weights ───────────────────────────────────────────
+        if (lower.includes("llama") && lower.includes("scout")) return "llama-4-scout";
+        if (lower.includes("mistral") && lower.includes("small")) return "mistral-small";
+        if (lower.includes("ling") && (lower.includes("2.6") || lower.includes("2-6"))) return "ling-2-6";
+        if (lower.includes("qwen") && !lower.includes("coder")) return "qwen3-6";
+
+        // ── Other families ─────────────────────────────────────────
+        if (lower.includes("minimax")) return "minimax-m3";
+        if (lower.includes("kimi")) return "kimi-k2";
+        if (lower.includes("glm")) return "glm-5";
+        if (lower.includes("qwen") && lower.includes("coder")) return "qwen3-coder";
+
         return rootId;
       };
 
+      const isBlocklisted = (rootId: string, modelId: string): boolean => {
+        const providerPrefix = modelId.includes("/") ? modelId.split("/")[0] : "";
+        if (HIDDEN_PROVIDER_PREFIXES.has(providerPrefix)) return true;
+        if (BLOCKLISTED_ROOT_IDS.has(rootId)) return true;
+        const lower = rootId.toLowerCase();
+        if (lower.includes("codex-auto-review") || lower.includes("codex_auto")) return true;
+        if (lower === "gpt-5-2" || lower === "gpt-5.2") return true;
+        if (lower.includes("codex-spark") || lower.includes("3-codex")) return true;
+        return false;
+      };
+
       outputModels = enrichedModels.filter((model) => {
-        // Always keep virtual catalog entries
-        if (model.owned_by === virtualCatalogBrand) return true;
-        // For provider models: check if the root ID is covered by virtual catalog
-        const rootId = model.root || model.id;
+        const modelId = typeof model.id === "string" ? model.id : "";
+        const rootId = model.root || modelId;
         const canonical = getCanonicalRootId(rootId);
+
+        // Always keep virtual catalog (combo) entries — they are the clean consolidated entries
+        if (model.owned_by === virtualCatalogBrand) return true;
+
+        // Remove blocklisted models (internal tools, junk, video-gen, etc.)
+        if (isBlocklisted(canonical, modelId)) return false;
+        if (isBlocklisted(rootId, modelId)) return false;
+
+        // Remove provider-prefixed duplicates that are now covered by a virtual catalog entry
         if (virtualCatalogRootIds.has(canonical)) return false;
-        // Check sanitized form (handles models with slashes like "deepseek/deepseek-v4-pro")
         if (virtualCatalogRootIds.has(sanitize(canonical))) return false;
-        // Also check if model.id itself is "alias/rootId" where rootId is virtual
-        const slashIdx = typeof model.id === "string" ? model.id.indexOf("/") : -1;
+
+        // Also check unprefixed part of "alias/rootId" style IDs
+        const slashIdx = modelId.indexOf("/");
         if (slashIdx > 0) {
-          const unprefixedId = model.id.slice(slashIdx + 1);
+          const unprefixedId = modelId.slice(slashIdx + 1);
           const canonicalUnprefixed = getCanonicalRootId(unprefixedId);
+          // Blocklist check for unprefixed root too
+          if (isBlocklisted(canonicalUnprefixed, modelId)) return false;
           if (virtualCatalogRootIds.has(canonicalUnprefixed)) return false;
           if (virtualCatalogRootIds.has(sanitize(canonicalUnprefixed))) return false;
         }
