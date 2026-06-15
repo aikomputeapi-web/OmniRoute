@@ -85,7 +85,9 @@ const FORCED_CONSOLIDATION_MODELS = new Set([
   "gpt-oss-20b",
   "glm-5",
   "gpt-5-5",
+  "gpt-5-5-high",
   "gpt-5-4",
+  "gpt-5-4-high",
   "gpt-5-4-mini",
   "gpt-5-3",
   "gpt-4o",
@@ -1521,8 +1523,10 @@ export async function getUnifiedModelsResponse(
         // ── GPT family ─────────────────────────────────────────────
         if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
         if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
-        if (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) return "gpt-5-5";
-        if ((lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) && !lower.includes("mini")) return "gpt-5-4";
+        if (lower.includes("gpt-5.5-high") || lower.includes("gpt-5-5-high") || lower.includes("gpt-5.5-xhigh") || lower.includes("gpt-5-5-xhigh")) return "gpt-5-5-high";
+        if ((lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) && !lower.includes("high")) return "gpt-5-5";
+        if (lower.includes("gpt-5.4-high") || lower.includes("gpt-5-4-high") || lower.includes("gpt-5.4-xhigh") || lower.includes("gpt-5-4-xhigh")) return "gpt-5-4-high";
+        if ((lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) && !lower.includes("mini") && !lower.includes("high")) return "gpt-5-4";
         if (lower.includes("gpt-5.4-mini") || lower.includes("gpt-5-4-mini") || lower.includes("gpt-5-mini") || lower.includes("gpt-4o-mini")) return "gpt-5-4-mini";
         if (lower.includes("gpt-5.3") || lower.includes("gpt-5-3")) return "gpt-5-3";
         if (lower.includes("gpt-4o") || lower.includes("gpt_4o")) return "gpt-4o";

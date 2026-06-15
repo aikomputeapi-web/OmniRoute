@@ -104,7 +104,9 @@ const FORCED_CONSOLIDATION_MODELS = new Set([
   "gpt-oss-20b",
   "glm-5",
   "gpt-5-5",
+  "gpt-5-5-high",
   "gpt-5-4",
+  "gpt-5-4-high",
   "gpt-5-4-mini",
   "gpt-5-3",
   "gpt-4o",
@@ -177,12 +179,18 @@ export function getCanonicalRootId(rootId: string): string {
   // ── GPT family ─────────────────────────────────────────────
   if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
   if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
-  if (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5") || lower === "gpt-5.5") {
+  if (lower.includes("gpt-5.5-high") || lower.includes("gpt-5-5-high") || lower.includes("gpt-5.5-xhigh") || lower.includes("gpt-5-5-xhigh")) {
+    return "gpt-5-5-high";
+  }
+  if ((lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) && !lower.includes("high")) {
     return "gpt-5-5";
+  }
+  if (lower.includes("gpt-5.4-high") || lower.includes("gpt-5-4-high") || lower.includes("gpt-5.4-xhigh") || lower.includes("gpt-5-4-xhigh")) {
+    return "gpt-5-4-high";
   }
   if (
     (lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) &&
-    !lower.includes("mini")
+    !lower.includes("mini") && !lower.includes("high")
   ) {
     return "gpt-5-4";
   }
@@ -738,6 +746,40 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       }
       if (rootId === "gpt-oss-20b") {
         const extraPatterns = ["openai/gpt-oss-20b:free", "openai/gpt-oss-20b", "gpt-oss-20b"];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "gpt-5-5-high") {
+        const extraPatterns = [
+          "gpt-5-5-high", "gpt-5.5-high", "gpt-5-5-xhigh", "gpt-5.5-xhigh",
+          "openai/gpt-5.5-high", "openai/gpt-5-5-high",
+        ];
+        for (const p of extraPatterns) {
+          try {
+            await createModelComboMapping({
+              pattern: p,
+              comboId: combo.id as string,
+              priority: 100,
+              enabled: true,
+              description: VIRTUAL_CATALOG_TAG,
+            });
+          } catch {}
+        }
+      }
+      if (rootId === "gpt-5-4-high") {
+        const extraPatterns = [
+          "gpt-5-4-high", "gpt-5.4-high", "gpt-5-4-xhigh", "gpt-5.4-xhigh",
+          "openai/gpt-5.4-high", "openai/gpt-5-4-high",
+        ];
         for (const p of extraPatterns) {
           try {
             await createModelComboMapping({
