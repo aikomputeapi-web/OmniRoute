@@ -96,7 +96,7 @@ const ALLOWED_NVIDIA_MODELS = new Set([
 
 const FORCED_CONSOLIDATION_MODELS = new Set([
   "claude-sonnet-4-6",
-  "claude-opus-4-6",
+  "claude-opus-4-7",
   "claude-haiku-4-5",
   "minimax-m3",
   "kimi-k2",
@@ -170,7 +170,7 @@ export function getCanonicalRootId(rootId: string): string {
     return "claude-sonnet-4-6";
   }
   if (lower.includes("claude") && lower.includes("opus")) {
-    return "claude-opus-4-6";
+    return "claude-opus-4-7";
   }
   if (lower.includes("claude") && (lower.includes("haiku") || lower.includes("haiku"))) {
     return "claude-haiku-4-5";
@@ -857,12 +857,12 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
           } catch {}
         }
       }
-      if (rootId === "claude-opus-4-6") {
+      if (rootId === "claude-opus-4-7") {
         const extraPatterns = [
-          "claude-opus-4-6", "claude-opus-4.6", "claude-opus-4-7", "claude-opus-4.7",
+          "claude-opus-4-7", "claude-opus-4.7", "claude-opus-4-6", "claude-opus-4.6",
           "claude-opus-4.5", "claude-opus-4-5-20251101",
-          "claude-opus-4-6-thinking", "claude-opus-4.6-thinking",
           "claude-opus-4-7-thinking", "claude-opus-4.7-thinking",
+          "claude-opus-4-6-thinking", "claude-opus-4.6-thinking",
         ];
         for (const p of extraPatterns) {
           try {

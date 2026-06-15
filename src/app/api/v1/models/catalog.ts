@@ -77,7 +77,7 @@ const ALLOWED_NVIDIA_MODELS = new Set([
 
 const FORCED_CONSOLIDATION_MODELS = new Set([
   "claude-sonnet-4-6",
-  "claude-opus-4-6",
+  "claude-opus-4-7",
   "claude-haiku-4-5",
   "minimax-m3",
   "kimi-k2",
@@ -1517,7 +1517,7 @@ export async function getUnifiedModelsResponse(
 
         // ── Claude family ──────────────────────────────────────────
         if (lower.includes("claude") && lower.includes("sonnet")) return "claude-sonnet-4-6";
-        if (lower.includes("claude") && lower.includes("opus")) return "claude-opus-4-6";
+        if (lower.includes("claude") && lower.includes("opus")) return "claude-opus-4-7";
         if (lower.includes("claude") && lower.includes("haiku")) return "claude-haiku-4-5";
 
         // ── GPT family ─────────────────────────────────────────────
