@@ -25,6 +25,10 @@ const STAGING_FORBIDDEN_FILES = ["audit-report.json", "package-lock.json"];
 export const APP_STAGING_REMOVAL_PATHS: string[] = [
   ...STAGING_FORBIDDEN_DIRECTORIES,
   ...STAGING_FORBIDDEN_FILES,
+  // onnxruntime CUDA provider binary (~316 MB) inflates the npm tarball
+  // past the registry 413 limit for npm.org.  It's only needed on systems
+  // with a CUDA GPU — users install CUDA providers separately.
+  "node_modules/onnxruntime-node/bin/napi-v6/linux/x64/libonnxruntime_providers_cuda.so",
 ];
 
 export const APP_STAGING_ALLOWED_EXACT_PATHS: string[] = [
@@ -38,6 +42,7 @@ export const APP_STAGING_ALLOWED_EXACT_PATHS: string[] = [
   "scripts/dev/sync-env.mjs",
   "server.js",
   "server-ws.mjs",
+  "webdav-handler.mjs",
 ];
 
 export const APP_STAGING_ALLOWED_PATH_PREFIXES: string[] = [
@@ -97,10 +102,16 @@ export const PACK_ARTIFACT_ROOT_ALLOWED_PATH_PREFIXES: string[] = [
   "@omniroute/opencode-plugin/",
   "@omniroute/opencode-provider/",
   "bin/cli/",
-  "open-sse/mcp-server/schemas/",
-  "open-sse/mcp-server/tools/",
-  "src/lib/cli-helper/",
-  "src/shared/contracts/",
+  // Broad open-sse + src source dirs added to package.json "files" in v3.8.21
+  // to allow TypeScript-first imports from the published package.
+  "open-sse/",
+  "src/domain/",
+  "src/lib/",
+  "src/mitm/",
+  "src/server/",
+  "src/shared/",
+  "src/sse/",
+  "src/types/",
 ];
 
 export const PACK_ARTIFACT_REQUIRED_PATHS: string[] = [
@@ -110,6 +121,7 @@ export const PACK_ARTIFACT_REQUIRED_PATHS: string[] = [
   "dist/server-ws.mjs",
   "dist/responses-ws-proxy.mjs",
   "dist/peer-stamp.mjs",
+  "dist/webdav-handler.mjs",
   "bin/cli/program.mjs",
   "bin/mcp-server.mjs",
   "bin/nodeRuntimeSupport.mjs",

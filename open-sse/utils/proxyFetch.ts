@@ -201,7 +201,11 @@ function getTargetUrl(input) {
   return String(input);
 }
 
-export async function runWithProxyContext(proxyConfig, fn) {
+export async function runWithProxyContext(
+  proxyConfig,
+  fn,
+  opts?: { directFallbackOnUnreachable?: boolean }
+) {
   if (typeof fn !== "function") {
     throw new TypeError("runWithProxyContext requires a callback function");
   }
@@ -212,6 +216,15 @@ export async function runWithProxyContext(proxyConfig, fn) {
 
   const resolvedProxyUrl = effectiveProxyConfig ? proxyConfigToUrl(effectiveProxyConfig) : null;
 
+  // When set, a proxy that fails the reachability/family pre-checks degrades to a
+  // DIRECT connection instead of throwing. Use for control-plane operations (OAuth,
+  // connection tests, token refresh) where reaching the upstream matters more than
+  // egress-IP pinning — a dead pinned proxy must not surface as a generic 500. Data
+  // plane (chat) keeps the strict behaviour so per-account IP isolation is preserved.
+  const directFallbackOnUnreachable = opts?.directFallbackOnUnreachable === true;
+  // Run fn with the proxy context cleared so the request egresses directly.
+  const runDirect = () => proxyContext.run(null, fn);
+
   // T14: Proxy Fast-Fail
   // Perform a short TCP reachability check before issuing upstream requests.
   // Skip for vercel-relay type: proxyConfigToUrl returns "https://<host>" which is the
@@ -221,6 +234,12 @@ export async function runWithProxyContext(proxyConfig, fn) {
     const reachable = await isProxyReachable(resolvedProxyUrl);
     if (!reachable) {
       const proxyLabel = proxyUrlForLogs(resolvedProxyUrl);
+      if (directFallbackOnUnreachable) {
+        console.warn(
+          `[ProxyFetch] Proxy unreachable (${proxyLabel}); using a direct connection for this request.`
+        );
+        return runDirect();
+      }
       const err = new Error(`[Proxy Fast-Fail] Proxy unreachable: ${proxyLabel}`) as Error & {
         code?: string;
         statusCode?: number;
@@ -228,6 +247,32 @@ export async function runWithProxyContext(proxyConfig, fn) {
       err.code = "PROXY_UNREACHABLE";
       err.statusCode = 503;
       throw err;
+    }
+  }
+
+  // Fail-closed family check: when the proxy URL carries a ?family=ipv6|ipv4 marker
+  // (set for HOSTNAME proxies by proxyConfigToUrl), verify the hostname actually has a
+  // record in that family before egressing. Refuse early rather than silently fall back
+  // to the other family. No-op for IP literals (their family is intrinsic).
+  if (resolvedProxyUrl && !isVercelRelay) {
+    try {
+      const u = new URL(resolvedProxyUrl);
+      const fam = u.searchParams.get("family");
+      if (fam === "ipv6" || fam === "ipv4") {
+        const { assertHostnameSupportsFamily } = await import("./proxyFamilyResolve.ts");
+        await assertHostnameSupportsFamily(u.hostname, fam === "ipv6" ? 6 : 4);
+      }
+    } catch (familyErr) {
+      if (directFallbackOnUnreachable) {
+        console.warn(
+          `[ProxyFetch] Proxy family pre-check failed (${proxyUrlForLogs(resolvedProxyUrl)}); using a direct connection for this request.`
+        );
+        return runDirect();
+      }
+      const e = familyErr as Error & { code?: string; statusCode?: number };
+      e.code = e.code || "PROXY_FAMILY_UNAVAILABLE";
+      e.statusCode = e.statusCode || 503;
+      throw e;
     }
   }
 
@@ -239,6 +284,19 @@ export async function runWithProxyContext(proxyConfig, fn) {
     }
     return fn();
   });
+}
+
+/**
+ * Like {@link runWithProxyContext}, but if the assigned proxy is unreachable or fails
+ * its pre-checks the request degrades to a DIRECT connection instead of throwing.
+ *
+ * For control-plane flows — OAuth code/token exchange, connection tests, token refresh —
+ * where a dead pinned proxy must not block reaching the upstream (it otherwise surfaces
+ * as a generic "Internal server error"). Data-plane chat keeps strict pinning via
+ * runWithProxyContext so per-account egress-IP isolation is preserved.
+ */
+export async function runWithProxyContextOrDirect(proxyConfig, fn) {
+  return runWithProxyContext(proxyConfig, fn, { directFallbackOnUnreachable: true });
 }
 
 async function patchedFetch(

@@ -9,11 +9,21 @@
  */
 
 import { extractApiKey } from "@/sse/services/auth";
-import { getApiKeyMetadata, getComboByName, isModelAllowedForKey } from "@/lib/localDb";
+import {
+  getApiKeyMetadata,
+  getComboByName,
+  isModelAllowedForKey,
+  getApiKeyById,
+} from "@/lib/localDb";
+import { isDashboardSessionAuthenticated } from "./apiAuth";
 import { resolveComboForModel } from "@/lib/db/modelComboMappings";
 import { checkBudget } from "@/domain/costRules";
 import { checkTokenLimits } from "@omniroute/open-sse/services/tokenLimitCounter.ts";
-import { errorResponse, buildErrorBody } from "@omniroute/open-sse/utils/error.ts";
+import {
+  errorResponse,
+  buildErrorBody,
+  sanitizeErrorMessage,
+} from "@omniroute/open-sse/utils/error.ts";
 import { HTTP_STATUS } from "@omniroute/open-sse/config/constants.ts";
 import * as log from "@/sse/utils/logger";
 import { checkRateLimit, RateLimitRule } from "./rateLimiter";
@@ -173,6 +183,45 @@ function matchesComboAccessRule(comboName: string, requestedModel: string, rule:
   );
 }
 
+function isAnthropicMessagesRequest(request: Request): boolean {
+  if (request.headers.has("anthropic-version")) return true;
+
+  try {
+    const url = new URL(request.url);
+    return url.pathname.endsWith("/v1/messages");
+  } catch {
+    return false;
+  }
+}
+
+function policyErrorResponse(
+  request: Request,
+  statusCode: number,
+  message: string,
+  anthropicMessage = message,
+  anthropicErrorType = "permission_error",
+  anthropicStatusCode = statusCode
+): Response {
+  if (!isAnthropicMessagesRequest(request)) {
+    return errorResponse(statusCode, message);
+  }
+
+  const safeMessage = sanitizeErrorMessage(anthropicMessage);
+  return new Response(
+    JSON.stringify({
+      type: "error",
+      error: {
+        type: anthropicErrorType,
+        message: safeMessage,
+      },
+    }),
+    {
+      status: anthropicStatusCode,
+      headers: { "Content-Type": "application/json" },
+    }
+  );
+}
+
 async function resolveRequestedComboName(modelStr: string): Promise<string | null> {
   const exact = await getComboByName(modelStr);
   if (exact && typeof exact.name === "string") return exact.name;
@@ -226,13 +275,41 @@ export interface ApiKeyPolicyResult {
  * // proceed with request, optionally use policy.apiKeyInfo
  * ```
  */
+/** Header carrying the id of the API key a dashboard playground request wants to
+ *  test the policy for (never the key secret). */
+const PLAYGROUND_KEY_ID_HEADER = "x-omniroute-playground-key-id";
+
+/**
+ * Dashboard playground support. An authenticated admin session may test a
+ * specific API key's policy (allowed_models, budget, …) WITHOUT putting the key
+ * secret on the wire: the browser sends only the key id via
+ * `x-omniroute-playground-key-id` and we resolve the secret server-side.
+ *
+ * Security: honored ONLY for authenticated dashboard sessions, and only as a
+ * fallback when no bearer key was presented — so it can never bypass auth or
+ * escalate privileges, it only applies (narrows to) the selected key's policy.
+ */
+export async function resolvePlaygroundTestKey(request: Request): Promise<string | null> {
+  const keyId = request.headers.get(PLAYGROUND_KEY_ID_HEADER);
+  if (!keyId) return null;
+  if (!(await isDashboardSessionAuthenticated(request))) return null;
+  try {
+    const row = await getApiKeyById(keyId);
+    return typeof row?.key === "string" ? row.key : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function enforceApiKeyPolicy(
   request: Request,
   modelStr: string | null
 ): Promise<ApiKeyPolicyResult> {
-  const apiKey = extractApiKey(request);
+  // A real bearer key wins; otherwise an authenticated dashboard playground may
+  // test a specific key's policy by id (resolved server-side, secret never sent).
+  const apiKey = extractApiKey(request) || (await resolvePlaygroundTestKey(request));
 
-  // No API key = local mode, skip policy checks
+  // No API key = local/session mode, skip policy checks
   if (!apiKey) {
     return { apiKey: null, apiKeyInfo: null, rejection: null };
   }
@@ -407,7 +484,12 @@ export async function enforceApiKeyPolicy(
   let requestedComboName: string | null = null;
   const isQuotaExclusive =
     Boolean(apiKeyInfo.allowedQuotas) && (apiKeyInfo.allowedQuotas as string[]).length > 0;
-  if (!isQuotaExclusive && modelStr && apiKeyInfo.allowedCombos && apiKeyInfo.allowedCombos.length > 0) {
+  if (
+    !isQuotaExclusive &&
+    modelStr &&
+    apiKeyInfo.allowedCombos &&
+    apiKeyInfo.allowedCombos.length > 0
+  ) {
     try {
       const comboAccess = await isComboAllowedForKey(apiKeyInfo.allowedCombos, modelStr);
       requestedComboName = comboAccess.comboName;
@@ -459,9 +541,13 @@ export async function enforceApiKeyPolicy(
       return {
         apiKey,
         apiKeyInfo,
-        rejection: errorResponse(
+        rejection: policyErrorResponse(
+          request,
           HTTP_STATUS.FORBIDDEN,
-          `Model "${modelStr}" is not allowed for this API key`
+          `Model "${modelStr}" is not allowed for this API key`,
+          `Model "${modelStr}" is not enabled or quota is insufficient. Choose another allowed model.`,
+          "invalid_request_error",
+          HTTP_STATUS.BAD_REQUEST
         ),
       };
     }
@@ -498,9 +584,7 @@ export async function enforceApiKeyPolicy(
       const breach = checkTokenLimits(apiKeyInfo.id, undefined, modelStr ?? undefined);
       if (breach) {
         const scopeLabel =
-          breach.scopeType === "global"
-            ? "account"
-            : `${breach.scopeType} "${breach.scopeValue}"`;
+          breach.scopeType === "global" ? "account" : `${breach.scopeType} "${breach.scopeValue}"`;
         return {
           apiKey,
           apiKeyInfo,
@@ -517,10 +601,7 @@ export async function enforceApiKeyPolicy(
       return {
         apiKey,
         apiKeyInfo,
-        rejection: errorResponse(
-          HTTP_STATUS.SERVICE_UNAVAILABLE,
-          "Token limit policy unavailable"
-        ),
+        rejection: errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Token limit policy unavailable"),
       };
     }
   }

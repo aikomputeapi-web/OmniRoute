@@ -35,9 +35,11 @@ export { default as FilterBar } from "./FilterBar";
 export { default as ColumnToggle } from "./ColumnToggle";
 export { default as DataTable } from "./DataTable";
 export { default as NoAuthProviderCard } from "./NoAuthProviderCard";
+export { default as NoAuthAccountCard } from "./NoAuthAccountCard";
 export { default as CollapsibleSection } from "./CollapsibleSection";
 export { default as InfoTooltip } from "./InfoTooltip";
 export { default as PresetSlider } from "./PresetSlider";
+export { default as DistributeProxiesButton } from "./DistributeProxiesButton";
 
 export { SkillsConceptCard } from "./SkillsConceptCard";
 

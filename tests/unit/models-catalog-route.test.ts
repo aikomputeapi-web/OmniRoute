@@ -14,6 +14,7 @@ const modelsDb = await import("../../src/lib/db/models.ts");
 const combosDb = await import("../../src/lib/db/combos.ts");
 const settingsDb = await import("../../src/lib/db/settings.ts");
 const apiKeysDb = await import("../../src/lib/db/apiKeys.ts");
+const featureFlagsDb = await import("../../src/lib/db/featureFlags.ts");
 const modelsDevSync = await import("../../src/lib/modelsDevSync.ts");
 const v1ModelsCatalog = await import("../../src/app/api/v1/models/catalog.ts");
 
@@ -162,6 +163,37 @@ test("v1 models catalog accepts API keys embedded in vscode path aliases when au
   assert.equal(response.status, 200);
   assert.ok(Array.isArray(body.data));
   assert.ok(body.data.length > 0);
+});
+
+test("v1 models catalog includes display names by default", async () => {
+  const response = await v1ModelsCatalog.getUnifiedModelsResponse(
+    new Request("http://localhost/api/v1/models")
+  );
+  const body = (await response.json()) as any;
+  const model = body.data.find((item) => item.id === "tllm/claude_sonnet_4");
+
+  assert.equal(response.status, 200);
+  assert.ok(model);
+  assert.equal(model.name, "Claude Sonnet 4 (The Old LLM 🆓)");
+});
+
+test("v1 models catalog omits display names when the feature flag is disabled", async () => {
+  featureFlagsDb.setFeatureFlagOverride("MODEL_CATALOG_INCLUDE_NAMES", "false");
+
+  try {
+    const response = await v1ModelsCatalog.getUnifiedModelsResponse(
+      new Request("http://localhost/api/v1/models")
+    );
+    const body = (await response.json()) as any;
+    const model = body.data.find((item) => item.id === "tllm/claude_sonnet_4");
+
+    assert.equal(response.status, 200);
+    assert.ok(model);
+    assert.equal("name" in model, false);
+    assert.equal(model.root, "claude_sonnet_4");
+  } finally {
+    featureFlagsDb.removeFeatureFlagOverride("MODEL_CATALOG_INCLUDE_NAMES");
+  }
 });
 
 test("v1 models catalog hides models excluded by every active connection while keeping models served by at least one account", async () => {
@@ -658,11 +690,13 @@ test("v1 models catalog exposes Antigravity client-visible preview aliases inste
 
   assert.equal(response.status, 200);
   assert.ok(ids.has("antigravity/gemini-3-pro-preview"));
-  assert.ok(ids.has("antigravity/gemini-3-flash-preview"));
-  // #3184/#3303: the Gemini budget tiers (`-high`/`-low`) are user-callable
-  // client-visible aliases on the Antigravity OAuth backend (agy parity), so
-  // they ARE now exposed in the catalog. (They alias to the plain
-  // `gemini-3.1-pro` upstream id — see ANTIGRAVITY_MODEL_ALIASES.)
+  assert.ok(ids.has("antigravity/gemini-3.5-flash-low"));
+  assert.ok(ids.has("antigravity/gemini-3.5-flash-medium"));
+  assert.ok(ids.has("antigravity/gemini-3.5-flash-high"));
+  assert.equal(ids.has("antigravity/gemini-3-flash-preview"), false);
+  assert.equal(ids.has("antigravity/gemini-3-flash-agent"), false);
+  // Gemini 3.1 Pro budget tiers remain client-visible aliases for the plain
+  // `gemini-3.1-pro` upstream id — see ANTIGRAVITY_MODEL_ALIASES.
   assert.ok(ids.has("antigravity/gemini-3.1-pro-high"));
   // The legacy `gemini-claude-*` ids are alias KEYS (remapped to live upstream
   // ids), not public catalog entries, so they stay unexposed.

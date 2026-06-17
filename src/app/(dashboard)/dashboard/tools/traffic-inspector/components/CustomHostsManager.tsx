@@ -22,12 +22,16 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const HostInputSchema = z.string().min(1).max(253).regex(/^[a-z0-9.-]+$/i, "Invalid hostname");
+  const HostInputSchema = z
+    .string()
+    .min(1)
+    .max(253)
+    .regex(/^[a-z0-9.-]+$/i, "Invalid hostname");
 
   const fetchHosts = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/tools/traffic-inspector/custom-hosts");
+      const res = await fetch("/api/tools/traffic-inspector/hosts");
       if (res.ok) {
         const data = (await res.json()) as { hosts: CustomHost[] };
         setHosts(data.hosts ?? []);
@@ -50,7 +54,7 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
     }
     const host = parsed.data;
     try {
-      const res = await fetch("/api/tools/traffic-inspector/custom-hosts", {
+      const res = await fetch("/api/tools/traffic-inspector/hosts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ host, enabled: true }),
@@ -69,7 +73,7 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
 
   const deleteHost = async (host: string) => {
     try {
-      await fetch(`/api/tools/traffic-inspector/custom-hosts/${encodeURIComponent(host)}`, {
+      await fetch(`/api/tools/traffic-inspector/hosts/${encodeURIComponent(host)}`, {
         method: "DELETE",
       });
       await fetchHosts();
@@ -89,7 +93,9 @@ export function CustomHostsManager({ onClose }: CustomHostsManagerProps) {
             className="text-text-muted hover:text-text-main focus-ring rounded"
             aria-label="Close"
           >
-            <span className="material-symbols-outlined" aria-hidden="true">close</span>
+            <span className="material-symbols-outlined" aria-hidden="true">
+              close
+            </span>
           </button>
         </div>
 

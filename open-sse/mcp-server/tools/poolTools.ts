@@ -6,10 +6,12 @@
  *   2. omniroute_pool_sessions — List per-session details for a provider's pool
  *   3. omniroute_pool_reset    — Shut down and recreate a pool
  *   4. omniroute_pool_warm     — Warm up a pool to a target session count
+ *   5. omniroute_pool_health   — Aggregated pool health with breaker state and issues
  */
 
 import { z } from "zod";
 import { PoolRegistry } from "../../services/sessionPool/poolRegistry.ts";
+import { getWebSessionPoolHealth } from "../../services/webSessionPoolHealth.ts";
 
 // ─── Input Schemas ─────────────────────────────────────────────────────────
 
@@ -30,13 +32,14 @@ export const poolResetInput = z.object({
 
 export const poolWarmInput = z.object({
   provider: z.string().describe("Provider name (e.g. 'pollinations')"),
-  count: z
-    .number()
-    .int()
-    .min(1)
-    .max(50)
-    .default(6)
-    .describe("Target session count (1–50)"),
+  count: z.number().int().min(1).max(50).default(6).describe("Target session count (1–50)"),
+});
+
+export const poolHealthInput = z.object({
+  provider: z
+    .string()
+    .optional()
+    .describe("Provider name (e.g. 'pollinations'). Omit to list all pools"),
 });
 
 // ─── Handlers ──────────────────────────────────────────────────────────────
@@ -45,7 +48,7 @@ export const poolWarmInput = z.object({
  * Handle pool_status tool: return stats for one or all pools
  */
 export async function handlePoolStatus(
-  args: z.infer<typeof poolStatusInput>,
+  args: z.infer<typeof poolStatusInput>
 ): Promise<Record<string, unknown>> {
   if (args.provider) {
     const stats = PoolRegistry.getStats(args.provider);
@@ -67,7 +70,7 @@ export async function handlePoolStatus(
  * Handle pool_sessions tool: list per-session details for a provider's pool
  */
 export async function handlePoolSessions(
-  args: z.infer<typeof poolSessionsInput>,
+  args: z.infer<typeof poolSessionsInput>
 ): Promise<Record<string, unknown>> {
   const details = PoolRegistry.getSessionDetails(args.provider);
   if (!details) {
@@ -87,7 +90,7 @@ export async function handlePoolSessions(
  * Handle pool_reset tool: shut down and recreate a pool
  */
 export async function handlePoolReset(
-  args: z.infer<typeof poolResetInput>,
+  args: z.infer<typeof poolResetInput>
 ): Promise<Record<string, unknown>> {
   const existed = PoolRegistry.resetPool(args.provider);
   return {
@@ -103,7 +106,7 @@ export async function handlePoolReset(
  * Handle pool_warm tool: warm up a pool to a target session count
  */
 export async function handlePoolWarm(
-  args: z.infer<typeof poolWarmInput>,
+  args: z.infer<typeof poolWarmInput>
 ): Promise<Record<string, unknown>> {
   // If pool doesn't exist yet, we can't warm it
   const pool = PoolRegistry.getPool(args.provider);
@@ -122,6 +125,13 @@ export async function handlePoolWarm(
     sessionsAfter: after,
     created: after - before,
   };
+}
+
+export async function handlePoolHealth(
+  args: z.infer<typeof poolHealthInput>
+): Promise<Record<string, unknown>> {
+  const report = getWebSessionPoolHealth(args.provider);
+  return report as unknown as Record<string, unknown>;
 }
 
 // ─── Tool Registry ─────────────────────────────────────────────────────────
@@ -154,5 +164,12 @@ export const poolTools = {
       "Warms a session pool to the specified session count (1–50). Sessions beyond the current count are created with fresh browser fingerprints.",
     inputSchema: poolWarmInput,
     handler: (args: z.infer<typeof poolWarmInput>) => handlePoolWarm(args),
+  },
+  omniroute_pool_health: {
+    name: "omniroute_pool_health",
+    description:
+      "Returns aggregated web-session pool health: pool stats + circuit breaker state + per-session details + health status (healthy/degraded/down) + issues list.",
+    inputSchema: poolHealthInput,
+    handler: (args: z.infer<typeof poolHealthInput>) => handlePoolHealth(args),
   },
 };

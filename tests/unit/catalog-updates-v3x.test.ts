@@ -47,6 +47,25 @@ test("NVIDIA catalog includes the verified 2026 additions and GPT OSS 20B alias 
   });
 });
 
+test("Fable 5 catalog exposes claude-fable-5 in cc and kiro providers with matching pricing", () => {
+  const ccIds = new Set(getModelsByProviderId("cc").map((m) => m.id));
+  assert.ok(ccIds.has("claude-fable-5"), "cc must expose claude-fable-5");
+
+  const kiroModels = getModelsByProviderId("kiro");
+  const kiroIds = new Set(kiroModels.map((m) => m.id));
+  assert.ok(kiroIds.has("claude-fable-5"), "kiro must expose claude-fable-5");
+
+  const fable = kiroModels.find((m) => m.id === "claude-fable-5");
+  assert.equal(fable?.contextLength, 1000000);
+  assert.equal(fable?.maxOutputTokens, 128000);
+
+  const ccPricing = (DEFAULT_PRICING as Record<string, Record<string, unknown>>).cc;
+  assert.ok(ccPricing["claude-fable-5"], "cc pricing must include claude-fable-5");
+
+  const kiroPricing = (DEFAULT_PRICING as Record<string, Record<string, unknown>>).kiro;
+  assert.ok(kiroPricing["claude-fable-5"], "kiro pricing must include claude-fable-5");
+});
+
 test("Kiro catalog exposes Claude Opus 4.8 alongside 4.7 with matching pricing", () => {
   const models = getModelsByProviderId("kiro");
   const ids = new Set(models.map((model) => model.id));
@@ -61,4 +80,33 @@ test("Kiro catalog exposes Claude Opus 4.8 alongside 4.7 with matching pricing",
   // Pricing for the Kiro channel must cover the new model so usage cost is non-zero.
   const kiroPricing = (DEFAULT_PRICING as Record<string, Record<string, unknown>>).kiro;
   assert.ok(kiroPricing["claude-opus-4.8"], "kiro pricing must include claude-opus-4.8");
+});
+
+test("Every Kiro registry model resolves a non-zero pricing row (no $0.00 usage)", async () => {
+  const { getPricingForModel } = await import("../../src/shared/constants/pricing.ts");
+  const models = getModelsByProviderId("kiro");
+
+  assert.ok(models.length > 0, "kiro must expose models");
+
+  for (const model of models) {
+    const pricing = getPricingForModel("kiro", model.id) as {
+      input?: number;
+      output?: number;
+    } | null;
+    assert.ok(pricing, `kiro pricing must include "${model.id}"`);
+    assert.equal(
+      typeof pricing?.input === "number" && typeof pricing?.output === "number",
+      true,
+      `kiro pricing for "${model.id}" must have numeric input/output`
+    );
+  }
+
+  // Regression guard for the reported issue: Sonnet 4.6 must be priced like Sonnet 4.5.
+  const sonnet46 = getPricingForModel("kiro", "claude-sonnet-4.6") as {
+    input: number;
+    output: number;
+  } | null;
+  assert.ok(sonnet46, "kiro pricing must include claude-sonnet-4.6");
+  assert.equal(sonnet46?.input, 3.0);
+  assert.equal(sonnet46?.output, 15.0);
 });

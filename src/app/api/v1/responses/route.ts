@@ -1,8 +1,10 @@
 import { handleChat } from "@/sse/handlers/chat";
 import { withEarlyStreamKeepalive } from "@omniroute/open-sse/utils/earlyStreamKeepalive";
+import { withInjectionGuard } from "@/middleware/promptInjectionGuard";
 import { resolveResponsesApiModel } from "@/app/api/internal/codex-responses-ws/modelResolution";
 import { getModelInfo } from "@/sse/services/model";
 import { getComboByName } from "@/lib/db/combos";
+import { resolveKeepaliveThreshold } from "@omniroute/open-sse/utils/keepaliveThreshold";
 
 // NOTE: We do NOT call initTranslators() here — the translator registry is
 // bootstrapped at module level inside open-sse/translator/index.ts when it
@@ -60,7 +62,7 @@ export async function withCodexPreferredModel(request: Request): Promise<Request
  * POST /v1/responses - OpenAI Responses API format
  * Handled by the unified chat handler (openai-responses format auto-detected).
  */
-export async function POST(request) {
+async function postHandler(request, context) {
   // Codex CLI (wire_api="responses") consumes this endpoint over SSE and its reqwest
   // client drops the connection if no bytes arrive within ~5s. Keep the connection
   // warm with early keepalives while the upstream produces its first token (#2544).
@@ -68,7 +70,23 @@ export async function POST(request) {
   const resolved = await withCodexPreferredModel(request);
   const accept = String(request.headers?.get?.("accept") || "").toLowerCase();
   if (accept.includes("text/event-stream")) {
-    return await withEarlyStreamKeepalive(handleChat(resolved), { signal: request.signal });
+    // Adaptive threshold: web-session and anonymous-fallback providers are slower
+    // to produce the first byte, so use a longer keepalive threshold (15s vs 2s).
+    let model;
+    try {
+      const body = await resolved
+        .clone()
+        .json()
+        .catch(() => null);
+      model = body?.model;
+    } catch {}
+    const thresholdMs = resolveKeepaliveThreshold(model);
+    return await withEarlyStreamKeepalive(handleChat(resolved), {
+      signal: request.signal,
+      thresholdMs,
+    });
   }
   return await handleChat(resolved);
 }
+
+export const POST = withInjectionGuard(postHandler);

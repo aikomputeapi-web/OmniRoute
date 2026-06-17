@@ -6,6 +6,7 @@ import {
   CLAUDE_CODE_COMPATIBLE_DEFAULT_CHAT_PATH,
   joinClaudeCodeCompatibleUrl,
 } from "./claudeCodeCompatible.ts";
+import { getClaudeCodeCompatibleRequestDefaults } from "@/lib/providers/requestDefaults";
 
 const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 const OPENAI_COMPATIBLE_DEFAULTS = {
@@ -99,6 +100,15 @@ export function detectFormatFromEndpoint(body, endpointPath = "") {
     /\/(?:chat\/completions|completions)(?=\/|$)/i.test(path) ||
     /^(?:chat\/completions|completions)(?=\/|$)/i.test(path)
   ) {
+    if (
+      body &&
+      typeof body === "object" &&
+      !Array.isArray(body) &&
+      body.input !== undefined &&
+      body.messages === undefined
+    ) {
+      return "openai-responses";
+    }
     return "openai";
   }
 
@@ -295,10 +305,14 @@ export function buildProviderHeaders(provider, credentials, stream = true, body 
   // Specific override for Anthropic Compatible
   if (isClaudeCodeCompatible(provider)) {
     const token = credentials.apiKey || credentials.accessToken || "";
+    const ccRequestDefaults = getClaudeCodeCompatibleRequestDefaults(
+      credentials?.providerSpecificData
+    );
     return buildClaudeCodeCompatibleHeaders(
       token,
       stream,
-      credentials?.providerSpecificData?.ccSessionId
+      credentials?.providerSpecificData?.ccSessionId,
+      { redactThinking: ccRequestDefaults.redactThinking === true }
     );
   }
   if (isAnthropicCompatible(provider)) {

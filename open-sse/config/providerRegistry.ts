@@ -343,6 +343,9 @@ const CHAT_OPENAI_COMPAT_MODELS: Record<string, RegistryModel[]> = {
     { id: "mimo-v2-omni", name: "MiMo-V2-Omni", contextLength: 262144, maxOutputTokens: 131072 },
     { id: "mimo-v2-flash", name: "MiMo-V2-Flash", contextLength: 262144, maxOutputTokens: 65536 },
   ],
+  mimocode: [
+    { id: "mimo-auto", name: "MiMo Auto", contextLength: 1000000, maxOutputTokens: 128000 },
+  ],
   gitlawb: [
     { id: "mimo-v2.5-pro", name: "MiMo-V2.5-Pro", contextLength: 1048576, maxOutputTokens: 131072 },
     { id: "mimo-v2.5", name: "MiMo-V2.5", contextLength: 1048576, maxOutputTokens: 131072 },
@@ -656,10 +659,16 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     },
     oauth: {
       clientIdEnv: "CLAUDE_OAUTH_CLIENT_ID",
-      clientIdDefault: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+      clientIdDefault: resolvePublicCred("claude_id"),
       tokenUrl: "https://api.anthropic.com/v1/oauth/token",
     },
     models: [
+      {
+        id: "claude-fable-5",
+        name: "Claude Fable 5",
+        contextLength: 1000000,
+        maxOutputTokens: 128000,
+      },
       {
         id: "claude-opus-4-8",
         name: "Claude Opus 4.8",
@@ -828,7 +837,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     headers: getCodexDefaultHeaders(),
     oauth: {
       clientIdEnv: "CODEX_OAUTH_CLIENT_ID",
-      clientIdDefault: "app_EMoamEEZ73f0CkXaXp7hrann",
+      clientIdDefault: resolvePublicCred("codex_id"),
       clientSecretEnv: "CODEX_OAUTH_CLIENT_SECRET",
       clientSecretDefault: "",
       tokenUrl: "https://auth.openai.com/oauth/token",
@@ -922,7 +931,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     headers: getQwenOauthHeaders(),
     oauth: {
       clientIdEnv: "QWEN_OAUTH_CLIENT_ID",
-      clientIdDefault: "f0304373b74a44d2b584a3fb70ca9e56",
+      clientIdDefault: resolvePublicCred("qwen_id"),
       tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
       authUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code",
     },
@@ -1142,6 +1151,12 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     },
     models: [
       { id: "auto-kiro", name: "Auto (Kiro picks best model)" },
+      {
+        id: "claude-fable-5",
+        name: "Claude Fable 5",
+        contextLength: 1000000,
+        maxOutputTokens: 128000,
+      },
       {
         id: "claude-opus-4.8",
         name: "Claude Opus 4.8",
@@ -1626,8 +1641,8 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     alias: "cmd",
     format: "openai",
     executor: "command-code",
-    baseUrl: "https://api.commandcode.ai/provider/v1",
-    chatPath: "/chat/completions",
+    baseUrl: "https://api.commandcode.ai",
+    chatPath: "/alpha/generate",
     modelsUrl: "https://api.commandcode.ai/provider/v1/models",
     authType: "apikey",
     authHeader: "Authorization",
@@ -1958,7 +1973,7 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     authType: "oauth",
     oauth: {
       clientIdEnv: "KIMI_CODING_OAUTH_CLIENT_ID",
-      clientIdDefault: "17e5f671-d194-4dfb-9706-5516cb48c098",
+      clientIdDefault: resolvePublicCred("kimi_id"),
       tokenUrl: "https://auth.kimi.com/api/oauth/token",
       refreshUrl: "https://auth.kimi.com/api/oauth/token",
       authUrl: "https://auth.kimi.com/api/oauth/device_authorization",
@@ -2472,17 +2487,6 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     authType: "apikey",
     authHeader: "bearer",
     models: [{ id: "auto", name: "Auto" }],
-  },
-
-  krutrim: {
-    id: "krutrim",
-    alias: "krutrim",
-    format: "openai",
-    executor: "default",
-    baseUrl: "https://api.krutrim.com/v1/chat/completions",
-    authType: "apikey",
-    authHeader: "bearer",
-    models: [{ id: "krutrim-2-7b-instruct", name: "Krutrim 2 7B" }],
   },
 
   liquid: {
@@ -3049,16 +3053,15 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
 
   "claude-web": {
     id: "claude-web",
-    alias: "claude-web",
+    alias: "cw",
     format: "openai",
     executor: "claude-web",
     baseUrl: "https://claude.ai/api/organizations",
     authType: "apikey",
     authHeader: "cookie",
     models: [
-      { id: "claude-3-opus-20250219", name: "Claude 3 Opus (web)" },
-      { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet (web)" },
-      { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku (web)" },
+      { id: "claude-sonnet-4-6", name: "Claude 4.6 Sonnet (web)" },
+      { id: "claude-haiku-4-5", name: "Claude 4.5 Haiku (web)" },
     ],
   },
 
@@ -3194,6 +3197,18 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
       { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", supportsReasoning: true },
       { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", supportsReasoning: true },
       { id: "kimi-k2.6", name: "Kimi K2.6" },
+      // #3761: 262K native, vision + thinking + tools (parity with K2.6). Without this
+      // entry the "import from /models" path leaves it as a bare custom model with the
+      // 128K/8K capability defaults.
+      {
+        id: "kimi-k2.7-code",
+        name: "Kimi K2.7 Code",
+        contextLength: 262144,
+        maxOutputTokens: 262144,
+        supportsReasoning: true,
+        supportsVision: true,
+        toolCalling: true,
+      },
       { id: "glm-5.1", name: "GLM 5.1" },
       // #3110: MiniMax M3 via Ollama
       { id: "minimax-m3", name: "MiniMax M3", contextLength: 1048576, supportsVision: true },
@@ -4008,18 +4023,17 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     alias: "qwen-web",
     format: "openai",
     executor: "qwen-web",
-    baseUrl: "https://chat.qwen.ai/api/chat/completions",
+    // v2 API (the legacy /api/chat/completions endpoint was retired upstream).
+    baseUrl: "https://chat.qwen.ai/api/v2/chat/completions",
     authType: "apikey",
     authHeader: "bearer",
+    // Current upstream catalog (GET https://chat.qwen.ai/api/models). Legacy
+    // ids (qwen-plus, qwen3-max, ...) still resolve via the executor's
+    // MODEL_ALIASES map for backward compatibility.
     models: [
-      { id: "qwen-plus", name: "Qwen Plus" },
-      { id: "qwen-max", name: "Qwen Max" },
-      { id: "qwen-turbo", name: "Qwen Turbo" },
-      { id: "qwen3-plus", name: "Qwen3 Plus" },
-      { id: "qwen3-max", name: "Qwen3 Max" },
-      { id: "qwen3-flash", name: "Qwen3 Flash" },
-      { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-      { id: "qwen3-coder-flash", name: "Qwen3 Coder Flash" },
+      { id: "qwen3.7-max", name: "Qwen3.7 Max" },
+      { id: "qwen3.7-plus", name: "Qwen3.7 Plus" },
+      { id: "qwen3.6-plus", name: "Qwen3.6 Plus" },
     ],
   },
 
@@ -4065,6 +4079,18 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     authType: "apikey",
     authHeader: "bearer",
     models: CHAT_OPENAI_COMPAT_MODELS["xiaomi-mimo"],
+  },
+
+  mimocode: {
+    id: "mimocode",
+    alias: "mcode",
+    format: "openai",
+    executor: "mimocode",
+    baseUrl: "https://api.xiaomimimo.com",
+    chatPath: "/api/free-ai/openai/chat",
+    authType: "none",
+    authHeader: "none",
+    models: CHAT_OPENAI_COMPAT_MODELS["mimocode"],
   },
 
   gitlawb: {
@@ -4225,6 +4251,28 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     ],
   },
 
+  // #3877: byteplus was in the APIKEY_PROVIDERS catalog but never registered here, so key
+  // validation fell through to {unsupported:true} → the UI reported every key "invalid".
+  // BytePlus ModelArk is an OpenAI-compatible surface (region ap-southeast-1) authed with a
+  // Bearer ark-... key — same shape as the volcengine (Volcengine Ark) entry, different host.
+  byteplus: {
+    id: "byteplus",
+    alias: "bpm",
+    format: "openai",
+    executor: "default",
+    baseUrl: "https://ark.ap-southeast.bytepluses.com/api/v3/chat/completions",
+    modelsUrl: "https://ark.ap-southeast.bytepluses.com/api/v3/models",
+    authType: "apikey",
+    authHeader: "bearer",
+    defaultContextLength: 128000,
+    models: [
+      { id: "seed-2.0", name: "Seed 2.0" },
+      { id: "kimi-k2-thinking", name: "Kimi K2 Thinking", supportsReasoning: true },
+      { id: "glm-4.7", name: "GLM 4.7" },
+      { id: "gpt-oss-120b", name: "GPT-OSS-120B" },
+    ],
+  },
+
   bluesminds: {
     id: "bluesminds",
     alias: "bm",
@@ -4318,6 +4366,92 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     ],
   },
 
+  zenmux: {
+    id: "zenmux",
+    alias: "zm",
+    format: "openai",
+    executor: "default",
+    baseUrl: "https://zenmux.ai/api/v1/chat/completions",
+    modelsUrl: "https://zenmux.ai/api/v1/models",
+    authType: "apikey",
+    authHeader: "bearer",
+    defaultContextLength: 128000,
+    models: [
+      {
+        id: "google/gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro Preview (ZenMux)",
+        contextLength: 1048576,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "google/gemini-3-flash-preview",
+        name: "Gemini 3 Flash Preview (ZenMux)",
+        contextLength: 1048576,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "openai/gpt-5",
+        name: "GPT-5 (ZenMux)",
+        contextLength: 400000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5 (ZenMux)",
+        contextLength: 200000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "anthropic/claude-opus-4.5",
+        name: "Claude Opus 4.5 (ZenMux)",
+        contextLength: 200000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "deepseek/deepseek-chat",
+        name: "DeepSeek V3.2 Chat (ZenMux)",
+        contextLength: 128000,
+        supportsVision: false,
+        toolCalling: true,
+        supportsReasoning: false,
+      },
+      {
+        id: "x-ai/grok-4.1-fast",
+        name: "Grok 4.1 Fast (ZenMux)",
+        contextLength: 131072,
+        supportsVision: false,
+        toolCalling: true,
+        supportsReasoning: true,
+      },
+      {
+        id: "mistralai/mistral-large-2512",
+        name: "Mistral Large 2512 (ZenMux)",
+        contextLength: 128000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: false,
+      },
+      {
+        id: "z-ai/glm-4.6v-flash",
+        name: "GLM 4.6V Flash (ZenMux)",
+        contextLength: 128000,
+        supportsVision: true,
+        toolCalling: true,
+        supportsReasoning: false,
+      },
+    ],
+  },
+
   theoldllm: {
     id: "theoldllm",
     alias: "tllm",
@@ -4328,15 +4462,16 @@ const _REGISTRY_EAGER: Record<string, RegistryEntry> = {
     baseUrls: ["https://theoldllm.vercel.app/api/chatgpt"],
     authType: "none",
     authHeader: "none",
+    defaultContextLength: 200000,
     models: [
-      { id: "GPT_5_4", name: "GPT-5.4 (The Old LLM 🆓)" },
+      { id: "GPT_5_4", name: "GPT-5.4 (The Old LLM 🆓)", contextLength: 400000 },
       { id: "GPT_4o", name: "GPT-4o (The Old LLM 🆓)" },
-      { id: "claude_opus_4", name: "Claude Opus 4 (The Old LLM 🆓)" },
-      { id: "claude_sonnet_4", name: "Claude Sonnet 4 (The Old LLM 🆓)" },
-      { id: "claude_haiku_3_5", name: "Claude Haiku 3.5 (The Old LLM 🆓)" },
-      { id: "deepseek_v4", name: "DeepSeek V4 (The Old LLM 🆓)" },
-      { id: "gemini_3_flash", name: "Gemini 3 Flash (The Old LLM 🆓)" },
-      { id: "gemini_3_pro", name: "Gemini 3 Pro (The Old LLM 🆓)" },
+      { id: "claude_opus_4", name: "Claude Opus 4 (The Old LLM 🆓)", contextLength: 200000 },
+      { id: "claude_sonnet_4", name: "Claude Sonnet 4 (The Old LLM 🆓)", contextLength: 200000 },
+      { id: "claude_haiku_3_5", name: "Claude Haiku 3.5 (The Old LLM 🆓)", contextLength: 200000 },
+      { id: "deepseek_v4", name: "DeepSeek V4 (The Old LLM 🆓)", contextLength: 200000 },
+      { id: "gemini_3_flash", name: "Gemini 3 Flash (The Old LLM 🆓)", contextLength: 1000000 },
+      { id: "gemini_3_pro", name: "Gemini 3 Pro (The Old LLM 🆓)", contextLength: 1000000 },
     ],
     passthroughModels: true,
   },
@@ -4419,7 +4554,12 @@ export function generateModels(): Record<string, RegistryModel[]> {
   for (const entry of Object.values(_REGISTRY_EAGER)) {
     if (entry.models && entry.models.length > 0) {
       const key = entry.alias || entry.id;
-      // If alias already exists, don't overwrite (first wins)
+      // If alias already exists, don't overwrite (first wins).
+      // Keyed ONLY by the public alias — these keys ARE the /v1/models prefixes and
+      // the routing namespace, so a raw provider id must NOT be added here: it would
+      // surface a phantom prefix in the catalog and collide with another provider's
+      // route (e.g. id "opencode" vs the "opencode/" → opencode-zen route, #2798/#3870).
+      // Lookup by raw id is handled in getProviderModels() via the alias map instead.
       if (!models[key]) {
         models[key] = entry.models;
       }

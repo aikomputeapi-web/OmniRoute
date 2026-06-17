@@ -76,6 +76,12 @@ const IGNORE_FROM_CODE = new Set([
   // CI providers (set by the runner).
   "GITHUB_BASE_REF",
   "GITHUB_BASE_SHA",
+  // CI passes BASE_REF=${{ github.base_ref }} to the OpenAPI breaking-change gate
+  // (scripts/check/check-openapi-breaking.mjs) — a build/check signal, not OmniRoute runtime config.
+  "BASE_REF",
+  // PR body injected by GitHub Actions into the pr-evidence gate (github.event.pull_request.body);
+  // a CI-only signal, never an OmniRoute runtime config (Phase 7.10).
+  "PR_BODY",
   // CLI machine-id token opt-out (server-side flag; not user-configurable via .env).
   "OMNIROUTE_DISABLE_CLI_TOKEN",
   // update-notifier opt-out for the CLI binary.
@@ -131,6 +137,12 @@ const IGNORE_FROM_CODE = new Set([
   // NVIDIA diagnostic/test helpers used only by ad-hoc scripts.
   "NVIDIA_BASE_URL",
   "NVIDIA_MODEL",
+  // XDG standard data directory — set by OS/desktop session, not OmniRoute config.
+  // Read by setup-open-code.mjs to locate platform-specific OpenCode data dir.
+  "XDG_DATA_HOME",
+  // Test-only override: points setup-open-code.mjs at a fixture plugin dir without
+  // requiring the real bundled plugin to be built.
+  "OMNIROUTE_OPENCODE_PLUGIN_DIR",
 ]);
 
 // Vars documented in ENVIRONMENT.md but intentionally absent from .env.example.
@@ -176,7 +188,7 @@ const ENV_ONLY_ALLOWLIST = new Set([
   "CODEX_REFRESH_SPACING_MS",
   "DEBUG",
   "HEAP_PRESSURE_THRESHOLD_MB",
-  "OMNIRROUTE_TRACE",
+  "OMNIROUTE_TRACE",
   "PII_TEST_BYPASS_MIN_WINDOW",
   "PII_WINDOW_SIZE",
   "TRAE_STREAM_TIMEOUT_MS",

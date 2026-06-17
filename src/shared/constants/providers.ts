@@ -106,9 +106,28 @@ export const NOAUTH_PROVIDERS = {
     freeNote: "Free video generation — VEO 3.1, Seedance. 6 requests/hour.",
     authHint: "No auth required. Rate limited to 6 requests/hour per IP.",
   },
+  mimocode: {
+    id: "mimocode",
+    alias: "mcode",
+    name: "MiMoCode (Free)",
+    icon: "devices",
+    color: "#FF6B35",
+    textIcon: "MC",
+    website: "https://mimo.mi.com",
+    noAuth: true,
+    hasFree: true,
+    serviceKinds: ["llm"],
+    freeNote:
+      "Free — Xiaomi MiMo models via bootstrap JWT auth. No API key required. Supports streaming.",
+    authHint:
+      "No API key required. The executor auto-generates JWT tokens via device fingerprint bootstrap.",
+    notice: {
+      text: "MiMoCode uses Xiaomi's public free AI endpoint with bootstrap-based JWT authentication. No signup needed. Rate limits apply.",
+    },
+  },
 };
 
-export const FREE_APIKEY_PROVIDER_IDS = new Set(["qoder"]);
+export const FREE_APIKEY_PROVIDER_IDS = new Set(["qoder", "mimocode", "opencode"]);
 
 export function supportsApiKeyOnFreeProvider(providerId: unknown): boolean {
   return typeof providerId === "string" && FREE_APIKEY_PROVIDER_IDS.has(providerId);
@@ -298,7 +317,7 @@ export const OAUTH_PROVIDERS = {
     subscriptionRisk: true,
     riskNoticeVariant: "oauth",
     authHint:
-      "Sign in at windsurf.com to get your token. Visit windsurf.com/show-auth-token after logging in and paste it here, or use the device-code login flow.",
+      'In the Windsurf / VS Code IDE, open the command palette and run `Windsurf: Provide Auth Token` (or click the Jupyter "Get Windsurf Authentication Token" button), then copy the shown token and paste it here. Note: opening windsurf.com/show-auth-token directly only renders a "Redirecting" page — the IDE must initiate the flow (it adds a `?state=...` param) for the token to appear.',
     website: "https://windsurf.com",
   },
   "devin-cli": {
@@ -470,6 +489,21 @@ export const WEB_COOKIE_PROVIDERS = {
     authHint:
       "Paste your __client cookie value from .clerk.agent.adapta.one (DevTools → Application → Cookies)",
   },
+  lmarena: {
+    id: "lmarena",
+    alias: "lma",
+    name: "LMArena (Free)",
+    icon: "auto_awesome",
+    color: "#FF6B6B",
+    textIcon: "LMA",
+    website: "https://lmarena.ai",
+    hasFree: true,
+    freeNote:
+      "Free model comparison platform — 40+ models (GPT, Claude, Gemini, Llama). No subscription required.",
+    authHint:
+      "Paste your session cookie from lmarena.ai (DevTools → Application → Cookies). Optional — works with free tier for basic comparisons.",
+    riskNoticeVariant: "webCookie",
+  },
   huggingchat: {
     id: "huggingchat",
     // "hc" belongs to the hackclub provider; huggingchat uses its own id as alias.
@@ -573,6 +607,20 @@ export const WEB_COOKIE_PROVIDERS = {
       "Open chat.qwen.ai, log in, then open DevTools → Application → Local Storage → " +
       'copy the "token" value (or use tongyi_sso_ticket cookie as Bearer token).',
   },
+  "gemini-business": {
+    id: "gemini-business",
+    alias: "gembiz",
+    name: "Gemini Business (Enterprise)",
+    icon: "business_center",
+    color: "#4285F4",
+    textIcon: "GB",
+    website: "https://business.gemini.google",
+    hasFree: true,
+    freeNote:
+      "Free for Google Workspace enterprise accounts — enterprise Gemini models (Pro, Flash, image, video) via direct StreamGenerate HTTP API. No subscription required, just enterprise SSO.",
+    authHint:
+      "From your enterprise account: open business.gemini.google/home/cid/{your-cid}, then copy __Secure-1PSID and __Secure-1PSIDTS cookies from DevTools → Application → Cookies. Paste as a cookie header below.",
+  },
 };
 
 // API Key Providers
@@ -599,7 +647,7 @@ export const APIKEY_PROVIDERS = {
     textIcon: "CC",
     website: "https://commandcode.ai/",
     authHint:
-      "Use a Command Code API key. Requests are sent to Command Code's /provider/v1/chat/completions endpoint.",
+      "Use a Command Code API key. Requests are sent to Command Code's /alpha/generate endpoint.",
     apiHint: "Create or copy an API key from Command Code, then paste it here as a Bearer token.",
   },
   openrouter: {
@@ -1406,8 +1454,10 @@ export const APIKEY_PROVIDERS = {
     color: "#059669",
     textIcon: "PA",
     website: "https://publicai.co",
-    hasFree: true,
-    freeNote: "Free community inference tier for testing",
+    // #3558: PublicAI requires an API key (registry authType:"apikey"); signup grants a
+    // one-time credit, then it bills per-model. It is NOT a keyless/free tier.
+    hasFree: false,
+    freeNote: "Requires an API key — one-time signup credit, then paid",
   },
   moonshot: {
     id: "moonshot",
@@ -2284,6 +2334,22 @@ export const APIKEY_PROVIDERS = {
     apiHint:
       "Discounted API proxy for 40+ models including GPT-5, Claude Opus 4.6, Claude Sonnet 4.6, Qwen 3.5. Get your API key at https://freeaiapikey.com/dashboard. Base URL: https://freeaiapikey.com/v1.",
   },
+  zenmux: {
+    id: "zenmux",
+    alias: "zm",
+    name: "ZenMux",
+    icon: "neurology",
+    color: "#7C3AED",
+    textIcon: "ZM",
+    website: "https://zenmux.ai",
+    hasFree: true,
+    freeNote:
+      "Free tier includes access to Gemini 3 Flash, DeepSeek V3.2, Grok 4.1 Fast, Mistral Large, and more. Get your API key at https://zenmux.ai.",
+    authHint:
+      "Use your ZenMux API key in Authorization: Bearer <key>. ZenMux is fully OpenAI-compatible. Base URL: https://zenmux.ai/api/v1.",
+    apiHint:
+      "ZenMux exposes an OpenAI-compatible chat completions endpoint at /api/v1/chat/completions, plus Anthropic Messages (/api/anthropic/v1/messages) and Google Gemini (/api/vertex-ai) protocol surfaces. OmniRoute uses the OpenAI protocol.",
+  },
 };
 
 // Sub-categories within APIKEY_PROVIDERS (used by dashboard and catalog views).
@@ -2821,6 +2887,8 @@ export function providerAllowsOptionalApiKey(providerId: unknown): boolean {
     providerId === "huggingchat" ||
     providerId === "gitlawb" ||
     providerId === "gitlawb-gmi" ||
+    providerId === "mimocode" ||
+    providerId === "opencode" ||
     isLocalProvider(providerId) ||
     isSelfHostedChatProvider(providerId) ||
     isOpenAICompatibleProvider(providerId) ||
@@ -3074,6 +3142,8 @@ export const USAGE_SUPPORTED_PROVIDERS = [
   "nanogpt",
   "deepseek",
   "xiaomi-mimo",
+  "vertex",
+  "vertex-partner",
 ];
 
 // ── Zod validation at module load (Phase 7.2) ──

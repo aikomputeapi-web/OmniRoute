@@ -34,7 +34,7 @@ import { buildGitLabOAuthEndpoints, GITLAB_DUO_DEFAULT_BASE_URL } from "../gitla
 
 // Claude OAuth Configuration (Authorization Code Flow with PKCE)
 export const CLAUDE_CONFIG = {
-  clientId: process.env.CLAUDE_OAUTH_CLIENT_ID || "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+  clientId: resolvePublicCred("claude_id", "CLAUDE_OAUTH_CLIENT_ID"),
   authorizeUrl: "https://claude.ai/oauth/authorize",
   tokenUrl: "https://api.anthropic.com/v1/oauth/token",
   redirectUri:
@@ -51,7 +51,7 @@ export const CLAUDE_CONFIG = {
 
 // Codex (OpenAI) OAuth Configuration (Authorization Code Flow with PKCE)
 export const CODEX_CONFIG = {
-  clientId: process.env.CODEX_OAUTH_CLIENT_ID || "app_EMoamEEZ73f0CkXaXp7hrann",
+  clientId: resolvePublicCred("codex_id", "CODEX_OAUTH_CLIENT_ID"),
   authorizeUrl: "https://auth.openai.com/oauth/authorize",
   tokenUrl: "https://auth.openai.com/oauth/token",
   scope: "openid profile email offline_access",
@@ -98,7 +98,7 @@ export const GEMINI_CONFIG = {
 
 // Qwen OAuth Configuration (Device Code Flow with PKCE)
 export const QWEN_CONFIG = {
-  clientId: process.env.QWEN_OAUTH_CLIENT_ID || "f0304373b74a44d2b584a3fb70ca9e56",
+  clientId: resolvePublicCred("qwen_id", "QWEN_OAUTH_CLIENT_ID"),
   deviceCodeUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code",
   tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
   scope: "openid profile email model.completion",
@@ -133,7 +133,7 @@ export const QODER_CONFIG = {
 
 // Kimi Coding OAuth Configuration (Device Code Flow)
 export const KIMI_CODING_CONFIG = {
-  clientId: process.env.KIMI_CODING_OAUTH_CLIENT_ID || "17e5f671-d194-4dfb-9706-5516cb48c098",
+  clientId: resolvePublicCred("kimi_id", "KIMI_CODING_OAUTH_CLIENT_ID"),
   deviceCodeUrl: "https://auth.kimi.com/api/oauth/device_authorization",
   tokenUrl: "https://auth.kimi.com/api/oauth/token",
 };
@@ -235,7 +235,7 @@ export const OPENAI_CONFIG = {
 
 // GitHub Copilot OAuth Configuration (Device Code Flow)
 export const GITHUB_CONFIG = {
-  clientId: process.env.GITHUB_OAUTH_CLIENT_ID || "Iv1.b507a08c87ecfe98",
+  clientId: resolvePublicCred("github_copilot_id", "GITHUB_OAUTH_CLIENT_ID"),
   deviceCodeUrl: "https://github.com/login/device/code",
   tokenUrl: "https://github.com/login/oauth/access_token",
   userInfoUrl: "https://api.github.com/user",
@@ -378,7 +378,9 @@ export const TRAE_CONFIG = {
 //
 // Active fields:
 //   - inferenceUrl       → used by WindsurfExecutor (open-sse/executors/windsurf.ts)
-//   - showAuthTokenUrl   → linked from OAuthModal "Get token" button
+//   - showAuthTokenUrl   → reference URL; the real token only renders when the
+//                          IDE "Windsurf: Provide Auth Token" command opens it
+//                          with an IDE-supplied ?state= param (see field below)
 //   - firebaseApiKey     → reserved for Phase 2
 //   - ideName            → sent in extension headers
 export const WINDSURF_CONFIG = {
@@ -397,7 +399,11 @@ export const WINDSURF_CONFIG = {
   // ── Active fields (still consumed by runtime) ─────────────────────────────
   // Inference server URL (gRPC-web requests go here)
   inferenceUrl: "https://server.self-serve.windsurf.com",
-  // Primary login path: user visits this page, copies token, pastes it
+  // Primary login path: the user runs the "Windsurf: Provide Auth Token" command
+  // inside the Windsurf/VS Code IDE (or clicks the Jupyter "Get Windsurf
+  // Authentication Token" button), which opens this URL WITH an IDE-supplied
+  // `?state=<xyz>` param and renders the token. Opening this bare URL directly
+  // only shows a "Redirecting" page with no token (#3324).
   showAuthTokenUrl: "https://windsurf.com/show-auth-token",
   // Token refresh via Firebase Secure Token Service (reserved for Phase 2).
   // Default is the public Firebase Web client identifier embedded in the

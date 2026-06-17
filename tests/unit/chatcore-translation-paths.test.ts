@@ -274,7 +274,11 @@ async function resetStorage() {
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
 }
 
-async function waitFor(fn, timeoutMs = 1500) {
+// 10s ceiling: on 2-core CI runners under shard contention the 1500ms budget
+// expired mid-flight (observed: 1580ms fail on the upstream-timeout test) —
+// green runs return as soon as the condition holds, so the ceiling only
+// bounds the failure case.
+async function waitFor(fn, timeoutMs = 10000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const result = await fn();
@@ -388,6 +392,11 @@ test.after(async () => {
 });
 
 test("chatCore times out upstream execution before provider response headers", async () => {
+  // This test asserts pendingDetail.providerRequest — only attached when the
+  // call-log pipeline capture is enabled. Declare the dependency explicitly
+  // (fresh-DB default leaves it off → the waitFor below would never resolve;
+  // failed deterministically on CI and on an isolated run, incl. at v3.8.18).
+  await settingsDb.updateSettings({ call_log_pipeline_enabled: true });
   const executor = getExecutor("openai");
   const originalGetTimeoutMs = executor.getTimeoutMs?.bind(executor);
   executor.getTimeoutMs = () => 200;
@@ -424,11 +433,13 @@ test("chatCore times out upstream execution before provider response headers", a
       userAgent: "unit-test",
     } as any);
 
-    const pendingDetail = (await waitFor(
-      () =>
-        Object.values(getPendingRequests().details[connectionId] || {}).find(
-          (detail: any) => detail?.providerRequest?.model === "gpt-4o-mini"
-        )
+    const pendingDetail = (await waitFor(() =>
+      // details[connectionId] is Record<modelKey, PendingRequestDetail[]> —
+      // the original predicate tested each ARRAY's .providerRequest (always
+      // undefined), so the waitFor could never resolve. Flatten to the details.
+      Object.values(getPendingRequests().details[connectionId] || {})
+        .flat()
+        .find((detail: any) => detail?.providerRequest?.model === "gpt-4o-mini")
     )) as any;
     assert.equal(pendingDetail?.providerRequest?.model, "gpt-4o-mini");
     assert.deepEqual(pendingDetail?.providerRequest?.messages, body.messages);
@@ -2285,7 +2296,13 @@ test("chatCore records Claude prompt cache and cache usage metadata in call logs
   });
 });
 
-test("chatCore serves emergency fallback responses for budget errors on non-streaming requests", async () => {
+test("chatCore propagates budget errors without an executor-level emergency hop", async () => {
+  // The emergency budget fallback is orchestrated by the routing layer
+  // (src/sse/handlers/chat.ts), which resolves credentials FOR the emergency
+  // provider through account selection. The old executor-level hop here re-sent
+  // the FAILING provider's credentials to the emergency provider's endpoint
+  // (cross-provider credential leak) — the engine must now surface the budget
+  // error as-is, with no extra upstream call.
   const { calls, result } = await invokeChatCore({
     provider: "openai",
     model: "gpt-4o-mini",
@@ -2295,30 +2312,28 @@ test("chatCore serves emergency fallback responses for budget errors on non-stre
       max_tokens: 9000,
       messages: [{ role: "user", content: "keep the request alive after budget exhaustion" }],
     },
-    responseFactory(_captured, seenCalls) {
-      if (seenCalls.length === 1) {
-        return new Response(
-          JSON.stringify({
-            error: { message: "insufficient funds on this account" },
-          }),
-          {
-            status: 402,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      return buildOpenAIResponse(false, "served by emergency fallback");
+    responseFactory() {
+      return new Response(
+        JSON.stringify({
+          error: { message: "insufficient funds on this account" },
+        }),
+        {
+          status: 402,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
     },
   });
 
-  const payload = (await result.response.json()) as any;
-
-  assert.equal(result.success, true);
-  assert.equal(calls.length, 2);
-  assert.equal(calls[1].body.model, "openai/gpt-oss-120b");
-  assert.equal(calls[1].body.max_tokens, 4096);
-  assert.equal(payload.choices[0].message.content, "served by emergency fallback");
+  assert.equal(result.success, false);
+  assert.equal(result.status, 402);
+  assert.equal(calls.length, 1, "no executor-level emergency hop may fire");
+  const body = (await result.response.json()) as any;
+  assert.match(String(body?.error?.message ?? ""), /insufficient funds/);
+  assert.ok(
+    !calls.some((c: any) => String(c.body?.model ?? "").includes("gpt-oss-120b")),
+    "emergency fallback model must not be called at executor level"
+  );
 });
 
 test("chatCore injects progress events into streaming responses when requested", async () => {

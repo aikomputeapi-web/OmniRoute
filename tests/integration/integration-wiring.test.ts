@@ -84,6 +84,23 @@ describe("Pipeline Wiring — instrumentation-node.ts", () => {
     assert.ok(src, "src/instrumentation-node.ts should exist");
     assert.match(src, /seedDefaultModelAliases/);
   });
+
+  it("should initialize Arena ELO sync on the live startup path (on by default, opt-out)", () => {
+    // The Next standalone runtime boots through instrumentation-node, NOT server-init.ts.
+    // The Arena ELO sync (which feeds the Free Provider Rankings page) must be wired here,
+    // or it never runs in production. initArenaEloSync self-gates through the feature flag
+    // resolver so ARENA_ELO_SYNC_ENABLED and dashboard overrides still apply.
+    assert.match(src, /initArenaEloSync/);
+    assert.match(src, /const started = await initArenaEloSync\(\)/);
+  });
+
+  it("should initialize pricing + models.dev sync on the live startup path (self-gated, opt-in)", () => {
+    // Same dead-path bug as Arena: these were only wired into the never-executed server-init.ts
+    // (models.dev had no caller at all), so their toggles were inert. They self-gate internally
+    // (PRICING_SYNC_ENABLED / settings.modelsDevSyncEnabled), so calling them here preserves opt-in.
+    assert.match(src, /initPricingSync/);
+    assert.match(src, /initModelsDevSync/);
+  });
 });
 
 describe("Pipeline Wiring — sse chat handler", () => {
@@ -230,31 +247,26 @@ describe("API Routes — dashboard and tool consumers", () => {
     const requestLogger = readProjectFile("src/shared/components/RequestLoggerV2.tsx");
     const proxyLogger = readProjectFile("src/shared/components/ProxyLogger.tsx");
     const consoleLogger = readProjectFile("src/shared/components/ConsoleLogViewer.tsx");
-    const activeRequests = readProjectFile("src/shared/components/ActiveRequestsPanel.tsx");
 
     assert.ok(logsPage, "logs page should exist");
     assert.ok(requestLogger, "RequestLoggerV2 should exist");
     assert.ok(proxyLogger, "ProxyLogger should exist");
     assert.ok(consoleLogger, "ConsoleLogViewer should exist");
-    assert.ok(activeRequests, "ActiveRequestsPanel should exist");
     assert.match(logsPage, /RequestLoggerV2/);
     assert.match(logsPage, /EmailPrivacyToggle/);
     assert.match(logsPage, /ProxyLogger/);
     assert.match(logsPage, /ConsoleLogViewer/);
-    assert.match(logsPage, /ActiveRequestsPanel/);
     // AuditLogTab removed: audit moved to its own /dashboard/audit page (#2859).
     assert.match(logsPage, /\/api\/logs\/export/);
     assert.match(requestLogger, /\/api\/usage\/call-logs/);
+    assert.match(requestLogger, /\/api\/logs\/\$\{/);
+    assert.doesNotMatch(requestLogger, /\/api\/logs\/active/);
     assert.match(requestLogger, /\/api\/logs\/detail/);
     assert.match(requestLogger, /useEmailPrivacyStore/);
     assert.match(requestLogger, /maskAccount\(log\.account, emailsVisible\)/);
     assert.match(requestLogger, /emailsVisible=\{emailsVisible\}/);
     assert.match(proxyLogger, /\/api\/usage\/proxy-logs/);
     assert.match(consoleLogger, /\/api\/logs\/console/);
-    assert.match(activeRequests, /\/api\/logs\/active/);
-    assert.match(activeRequests, /useEmailPrivacyStore/);
-    assert.match(activeRequests, /maskAccount\(row\.account, emailsVisible\)/);
-    assertRouteMethods("src/app/api/logs/active/route.ts", ["GET"]);
     assertRouteMethods("src/app/api/logs/console/route.ts", ["GET"]);
     assertRouteMethods("src/app/api/logs/detail/route.ts", ["GET", "POST"]);
     assertRouteMethods("src/app/api/logs/export/route.ts", ["GET"]);
@@ -263,25 +275,17 @@ describe("API Routes — dashboard and tool consumers", () => {
     assertRouteMethods("src/app/api/usage/call-logs/[id]/route.ts", ["GET"]);
   });
 
-  it("keeps the active request payload modal on opaque theme surfaces", () => {
-    const activeRequests = readProjectFile("src/shared/components/ActiveRequestsPanel.tsx");
+  it("keeps request log surfaces on opaque theme colors", () => {
+    const requestLogger = readProjectFile("src/shared/components/RequestLoggerV2.tsx");
     const globals = readProjectFile("src/app/globals.css");
 
-    assert.ok(activeRequests, "ActiveRequestsPanel should exist");
+    assert.ok(requestLogger, "RequestLoggerV2 should exist");
     assert.ok(globals, "globals.css should exist");
     assert.match(globals, /--color-card:\s+#ffffff/);
     assert.match(globals, /--color-card:\s+#161b22/);
     assert.match(globals, /--color-card:\s+var\(--color-card\)/);
-    assert.match(activeRequests, /rounded-xl border border-border bg-surface/);
-    assert.match(activeRequests, /backdrop-blur-sm/);
-    assert.match(
-      activeRequests,
-      /rounded-2xl[^"]*border border-border[^"]*bg-surface[^"]*shadow-2xl/
-    );
-    assert.doesNotMatch(activeRequests, /bg-card\/70/);
-    assert.doesNotMatch(activeRequests, /rounded-2xl[^"]*bg-card/);
-    assert.doesNotMatch(activeRequests, /shadow-\[/);
-    assert.doesNotMatch(activeRequests, /border-black\/10/);
+    assert.match(requestLogger, /bg-black\/5 dark:bg-black\/20/);
+    assert.doesNotMatch(requestLogger, /\/api\/logs\/active/);
   });
 
   it("keeps usage quota wired through A2A and MCP tools", () => {
@@ -524,10 +528,11 @@ describe("Page Integration — combos page empty state", () => {
   });
 
   it("should wire combo account labels to the global email privacy toggle", () => {
-    assert.match(src, /EmailPrivacyToggle/);
+    // #3822: the per-page EmailPrivacyToggle (and its emailVisibilityTooltip) was removed in
+    // favor of the single global switch in Settings → Appearance. The combos page still
+    // consumes the store and masks account labels via pickDisplayValue.
     assert.match(src, /useEmailPrivacyStore/);
     assert.match(src, /pickDisplayValue/);
-    assert.match(src, /emailVisibilityTooltip/);
   });
 
   it("should mask combo test result labels with the global email privacy toggle", () => {
@@ -539,7 +544,15 @@ describe("Page Integration — combos page empty state", () => {
 describe("Page Integration — provider test results privacy", () => {
   const providersSrc = readProjectFile("src/app/(dashboard)/dashboard/providers/page.tsx");
   const providerDetailSrc = readProjectFile(
-    "src/app/(dashboard)/dashboard/providers/[id]/page.tsx"
+    "src/app/(dashboard)/dashboard/providers/[id]/ProviderDetailPageClient.tsx"
+  );
+  // #3501 strangler-fig decomposition moved the test-results masking and the upstream-proxy
+  // surface out of the page client into dedicated components.
+  const batchTestResultsSrc = readProjectFile(
+    "src/app/(dashboard)/dashboard/providers/[id]/components/BatchTestResultsModal.tsx"
+  );
+  const upstreamProxyCardSrc = readProjectFile(
+    "src/app/(dashboard)/dashboard/providers/[id]/components/UpstreamProxyCard.tsx"
   );
 
   it("should mask provider test batch names with the global email privacy toggle", () => {
@@ -554,11 +567,13 @@ describe("Page Integration — provider test results privacy", () => {
   it("should mask provider detail test result names with the global email privacy toggle", () => {
     assert.ok(
       providerDetailSrc,
-      "src/app/(dashboard)/dashboard/providers/[id]/page.tsx should exist"
+      "src/app/(dashboard)/dashboard/providers/[id]/ProviderDetailPageClient.tsx should exist"
     );
     assert.match(providerDetailSrc, /const emailsVisible = useEmailPrivacyStore/);
+    // The per-connection test-result masking now lives in the decomposed BatchTestResultsModal.
+    assert.ok(batchTestResultsSrc, "BatchTestResultsModal.tsx should exist");
     assert.match(
-      providerDetailSrc,
+      batchTestResultsSrc,
       /pickDisplayValue\(\s*\[r\.connectionName\],\s*emailsVisible,\s*r\.connectionName\s*\)/
     );
   });
@@ -566,7 +581,7 @@ describe("Page Integration — provider test results privacy", () => {
   it("should resolve provider detail metadata through the shared dashboard catalog", () => {
     assert.ok(
       providerDetailSrc,
-      "src/app/(dashboard)/dashboard/providers/[id]/page.tsx should exist"
+      "src/app/(dashboard)/dashboard/providers/[id]/ProviderDetailPageClient.tsx should exist"
     );
     assert.match(providerDetailSrc, /resolveDashboardProviderInfo/);
   });
@@ -574,10 +589,12 @@ describe("Page Integration — provider test results privacy", () => {
   it("should treat upstream proxy entries as a dedicated management surface", () => {
     assert.ok(
       providerDetailSrc,
-      "src/app/(dashboard)/dashboard/providers/[id]/page.tsx should exist"
+      "src/app/(dashboard)/dashboard/providers/[id]/ProviderDetailPageClient.tsx should exist"
     );
     assert.match(providerDetailSrc, /isUpstreamProxyProvider/);
-    assert.match(providerDetailSrc, /Managed via Upstream Proxy Settings/);
+    // The "managed elsewhere" copy now lives in the decomposed UpstreamProxyCard component.
+    assert.ok(upstreamProxyCardSrc, "UpstreamProxyCard.tsx should exist");
+    assert.match(upstreamProxyCardSrc, /Managed via Upstream Proxy Settings/);
   });
 });
 

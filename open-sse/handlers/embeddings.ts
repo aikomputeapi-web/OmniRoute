@@ -24,6 +24,7 @@ import { isDetailedLoggingEnabled } from "@/lib/db/detailedLogs";
 import { getCallLogPipelineCaptureStreamChunks } from "@/lib/logEnv";
 import { toJsonErrorPayload } from "@/shared/utils/upstreamError";
 import { stripStaleEncodingHeaders } from "../utils/upstreamResponseHeaders.ts";
+import { sanitizeErrorMessage } from "../utils/error.ts";
 
 interface ClientRawRequest {
   endpoint: string;
@@ -78,7 +79,7 @@ export async function handleEmbedding({
 
   // Set up request logger for pipeline artifact capture
   const detailedLoggingEnabled = await isDetailedLoggingEnabled();
-  const captureStreamChunks = await getCallLogPipelineCaptureStreamChunks();
+  const captureStreamChunks = getCallLogPipelineCaptureStreamChunks();
   const reqLogger = await createRequestLogger(
     provider || "openai",
     "openai",
@@ -86,6 +87,9 @@ export async function handleEmbedding({
     {
       enabled: detailedLoggingEnabled,
       captureStreamChunks,
+      connectionId: connectionId || undefined,
+      model: model || (body.model as string),
+      provider: provider || undefined,
     }
   );
 
@@ -336,7 +340,7 @@ export async function handleEmbedding({
     return {
       success: false,
       status: 502,
-      error: `Embedding provider error: ${err.message}`,
+      error: `Embedding provider error: ${sanitizeErrorMessage(err.message)}`,
     };
   }
 }

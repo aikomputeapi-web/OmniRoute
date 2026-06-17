@@ -31,6 +31,7 @@ import {
 import { getSyncedCapability } from "@/lib/modelsDevSync";
 import { getModelSpec } from "@/shared/constants/modelSpecs";
 import { isAuthRequired, isDashboardSessionAuthenticated } from "@/shared/utils/apiAuth";
+import { isModelCatalogNamesEnabled } from "@/shared/utils/featureFlags";
 import { parseModel } from "@omniroute/open-sse/services/model";
 import { getTokenLimit } from "@omniroute/open-sse/services/contextManager";
 import { extractApiKey } from "@/sse/services/auth";
@@ -160,6 +161,17 @@ function parseJsonStringArray(value: unknown): string[] {
   }
 }
 
+function maybeOmitCatalogModelName<T extends Record<string, unknown>>(
+  model: T,
+  includeNames: boolean
+): T | Omit<T, "name"> {
+  if (includeNames || !Object.prototype.hasOwnProperty.call(model, "name")) return model;
+
+  const { name: omittedName, ...nextModel } = model;
+  void omittedName;
+  return nextModel;
+}
+
 function intersectStringArrays(arrays: string[][]): string[] {
   if (arrays.length === 0 || arrays.some((values) => values.length === 0)) return [];
   const [first, ...rest] = arrays;
@@ -255,9 +267,7 @@ function getOpenRouterDisplayName(model: {
   pricing?: { prompt?: string; completion?: string };
 }) {
   const name = model.name || model.id || "OpenRouter model";
-  return isOpenRouterFreeModel(model) && !/\bgr[aá]tis\b/i.test(name)
-    ? `${name} (Grátis)`
-    : name;
+  return isOpenRouterFreeModel(model) && !/\bgr[aá]tis\b/i.test(name) ? `${name} (Grátis)` : name;
 }
 
 async function validateCatalogApiKey(apiKey: string): Promise<boolean> {
@@ -359,6 +369,22 @@ function buildAliasMaps() {
   }
 
   return { aliasToProviderId, providerIdToAlias };
+}
+
+/**
+ * Detect the Codex CLI's model-catalog refresh client. Codex sends an `originator` header
+ * of `codex_exec` (codex exec) / `codex_cli_rs` (interactive TUI) — see openai/codex
+ * login/src/auth/default_client.rs DEFAULT_ORIGINATOR — and a matching `codex_*`
+ * User-Agent on its `GET /v1/models?client_version=...` catalog refresh. We only augment
+ * the response shape for these clients so every other OpenAI consumer keeps the
+ * byte-identical `{object,data}` payload.
+ */
+function isCodexModelCatalogClient(request: Request): boolean {
+  const headers = request.headers;
+  const originator = headers.get("originator")?.toLowerCase() ?? "";
+  if (originator.startsWith("codex")) return true;
+  const userAgent = headers.get("user-agent")?.toLowerCase() ?? "";
+  return userAgent.startsWith("codex");
 }
 
 /**
@@ -566,7 +592,10 @@ export async function getUnifiedModelsResponse(
       const specContext = isPositiveFiniteNumber(spec?.contextWindow)
         ? spec.contextWindow
         : undefined;
-      const contextLength = syncedContext ?? registryContext ?? specContext ??
+      const contextLength =
+        syncedContext ??
+        registryContext ??
+        specContext ??
         (getTokenLimit(providerId, modelId) || undefined);
       const maxInputTokens = isPositiveFiniteNumber(synced?.limit_input)
         ? synced.limit_input
@@ -1120,7 +1149,12 @@ export async function getUnifiedModelsResponse(
       if (!isProviderActive(embModel.provider)) continue;
       const rawModelId = embModel.id.split("/").pop() || embModel.id;
       if (embModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
-      if (embModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
+      if (
+        embModel.provider === "openrouter" &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId) &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")
+      )
+        continue;
       if (!providerSupportsModel(embModel.provider, rawModelId)) continue;
       if (getModelIsHidden(embModel.provider, rawModelId)) continue;
       if (hasEquivalentSpecialtyModel(embModel.provider, rawModelId, "embedding", embModel.id)) {
@@ -1142,7 +1176,12 @@ export async function getUnifiedModelsResponse(
       if (!isProviderActive(imgModel.provider)) continue;
       const rawModelId = imgModel.id.split("/").pop() || imgModel.id;
       if (imgModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
-      if (imgModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
+      if (
+        imgModel.provider === "openrouter" &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId) &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")
+      )
+        continue;
       if (!providerSupportsModel(imgModel.provider, rawModelId)) continue;
       if (getModelIsHidden(imgModel.provider, rawModelId)) continue;
       models.push({
@@ -1163,7 +1202,12 @@ export async function getUnifiedModelsResponse(
       if (!isProviderActive(rerankModel.provider)) continue;
       const rawModelId = rerankModel.id.split("/").pop() || rerankModel.id;
       if (rerankModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
-      if (rerankModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
+      if (
+        rerankModel.provider === "openrouter" &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId) &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")
+      )
+        continue;
       if (!providerSupportsModel(rerankModel.provider, rawModelId)) continue;
       if (getModelIsHidden(rerankModel.provider, rawModelId)) continue;
       if (hasEquivalentSpecialtyModel(rerankModel.provider, rawModelId, "rerank", rerankModel.id)) {
@@ -1184,7 +1228,12 @@ export async function getUnifiedModelsResponse(
       if (!isProviderActive(audioModel.provider)) continue;
       const rawModelId = audioModel.id.split("/").pop() || audioModel.id;
       if (audioModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
-      if (audioModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
+      if (
+        audioModel.provider === "openrouter" &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId) &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")
+      )
+        continue;
       if (!providerSupportsModel(audioModel.provider, rawModelId)) continue;
       if (getModelIsHidden(audioModel.provider, rawModelId)) continue;
       models.push({
@@ -1202,7 +1251,12 @@ export async function getUnifiedModelsResponse(
       if (!isProviderActive(modModel.provider)) continue;
       const rawModelId = modModel.id.split("/").pop() || modModel.id;
       if (modModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
-      if (modModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
+      if (
+        modModel.provider === "openrouter" &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId) &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")
+      )
+        continue;
       if (!providerSupportsModel(modModel.provider, rawModelId)) continue;
       if (getModelIsHidden(modModel.provider, rawModelId)) continue;
       models.push({
@@ -1219,7 +1273,12 @@ export async function getUnifiedModelsResponse(
       if (!isProviderActive(videoModel.provider)) continue;
       const rawModelId = videoModel.id.split("/").pop() || videoModel.id;
       if (videoModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
-      if (videoModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
+      if (
+        videoModel.provider === "openrouter" &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId) &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")
+      )
+        continue;
       if (!providerSupportsModel(videoModel.provider, rawModelId)) continue;
       if (getModelIsHidden(videoModel.provider, rawModelId)) continue;
       models.push({
@@ -1236,7 +1295,12 @@ export async function getUnifiedModelsResponse(
       if (!isProviderActive(musicModel.provider)) continue;
       const rawModelId = musicModel.id.split("/").pop() || musicModel.id;
       if (musicModel.provider === "nvidia" && !ALLOWED_NVIDIA_MODELS.has(rawModelId)) continue;
-      if (musicModel.provider === "openrouter" && !ALLOWED_OPENROUTER_MODELS.has(rawModelId) && !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")) continue;
+      if (
+        musicModel.provider === "openrouter" &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId) &&
+        !ALLOWED_OPENROUTER_MODELS.has(rawModelId + ":free")
+      )
+        continue;
       if (!providerSupportsModel(musicModel.provider, rawModelId)) continue;
       if (getModelIsHidden(musicModel.provider, rawModelId)) continue;
       models.push({
@@ -1288,13 +1352,28 @@ export async function getUnifiedModelsResponse(
             continue;
           }
 
-          const isAllowedExclusively = canonicalProviderId === "nvidia" || canonicalProviderId === "openrouter";
+          const isAllowedExclusively =
+            canonicalProviderId === "nvidia" || canonicalProviderId === "openrouter";
           if (!isAllowedExclusively) {
             if (model.isHidden === true) continue;
             if (getModelIsHidden(canonicalProviderId, modelId)) continue;
           }
 
+          // noAuth providers (e.g. theoldllm) never create DB connection rows, so the
+          // eligibility gate would drop every imported/custom model for them (#3200).
+          // Mirror providerSupportsModel's noAuth bypass (#2798) — keep the gate for
+          // auth providers (preserving parentProviderType for compatible UUID nodes).
+          const isNoAuthProvider =
+            isAllowedExclusively ||
+            Object.values(NOAUTH_PROVIDERS).some(
+              (p) =>
+                p.id === canonicalProviderId ||
+                p.id === providerId ||
+                ("alias" in p && p.alias === alias)
+            );
+
           if (
+            !isNoAuthProvider &&
             !hasEligibleConnectionForModel(
               getConnectionsForProvider(alias, canonicalProviderId, providerId, parentProviderType),
               modelId
@@ -1487,13 +1566,17 @@ export async function getUnifiedModelsResponse(
       return modelId ? getTokenLimit(canonicalId, modelId) : getTokenLimit(canonicalId);
     };
 
+    const includeModelNames = isModelCatalogNamesEnabled();
     const enrichedModels = finalModels.map((model) => {
-      if (model.owned_by === "combo" || model.owned_by === virtualCatalogBrand) return model;
+      if (model.owned_by === "combo" || model.owned_by === virtualCatalogBrand) {
+        return maybeOmitCatalogModelName(model, includeModelNames);
+      }
       const enriched = enrichCatalogModelEntry(model);
       const fallbackContextLength = getDefaultContextFallback(enriched);
-      return fallbackContextLength
+      const listedModel = fallbackContextLength
         ? { ...enriched, context_length: fallbackContextLength }
         : enriched;
+      return maybeOmitCatalogModelName(listedModel, includeModelNames);
     });
 
     // ── Virtual Catalog Deduplication ──────────────────────────────────────
@@ -1523,20 +1606,54 @@ export async function getUnifiedModelsResponse(
         // ── GPT family ─────────────────────────────────────────────
         if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
         if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
-        if (lower.includes("gpt-5.5-high") || lower.includes("gpt-5-5-high") || lower.includes("gpt-5.5-xhigh") || lower.includes("gpt-5-5-xhigh")) return "gpt-5-5-high";
-        if ((lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) && !lower.includes("high")) return "gpt-5-5";
-        if (lower.includes("gpt-5.4-high") || lower.includes("gpt-5-4-high") || lower.includes("gpt-5.4-xhigh") || lower.includes("gpt-5-4-xhigh")) return "gpt-5-4-high";
-        if ((lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) && !lower.includes("mini") && !lower.includes("high")) return "gpt-5-4";
-        if (lower.includes("gpt-5.4-mini") || lower.includes("gpt-5-4-mini") || lower.includes("gpt-5-mini") || lower.includes("gpt-4o-mini")) return "gpt-5-4-mini";
+        if (
+          lower.includes("gpt-5.5-high") ||
+          lower.includes("gpt-5-5-high") ||
+          lower.includes("gpt-5.5-xhigh") ||
+          lower.includes("gpt-5-5-xhigh")
+        )
+          return "gpt-5-5-high";
+        if (
+          (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) &&
+          !lower.includes("high")
+        )
+          return "gpt-5-5";
+        if (
+          lower.includes("gpt-5.4-high") ||
+          lower.includes("gpt-5-4-high") ||
+          lower.includes("gpt-5.4-xhigh") ||
+          lower.includes("gpt-5-4-xhigh")
+        )
+          return "gpt-5-4-high";
+        if (
+          (lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) &&
+          !lower.includes("mini") &&
+          !lower.includes("high")
+        )
+          return "gpt-5-4";
+        if (
+          lower.includes("gpt-5.4-mini") ||
+          lower.includes("gpt-5-4-mini") ||
+          lower.includes("gpt-5-mini") ||
+          lower.includes("gpt-4o-mini")
+        )
+          return "gpt-5-4-mini";
         if (lower.includes("gpt-5.3") || lower.includes("gpt-5-3")) return "gpt-5-3";
         if (lower.includes("gpt-4o") || lower.includes("gpt_4o")) return "gpt-4o";
 
         // ── Gemini family ──────────────────────────────────────────
-        if (lower.includes("gemini") && lower.includes("pro") && !lower.includes("flash") && !lower.includes("lite") && !lower.includes("agent")) {
+        if (
+          lower.includes("gemini") &&
+          lower.includes("pro") &&
+          !lower.includes("flash") &&
+          !lower.includes("lite") &&
+          !lower.includes("agent")
+        ) {
           if (lower.includes("2.5") || lower.includes("2-5")) return "gemini-2-5-pro";
           return "gemini-3-1-pro";
         }
-        if (lower.includes("gemini") && lower.includes("flash") && lower.includes("lite")) return "gemini-3-1-flash-lite";
+        if (lower.includes("gemini") && lower.includes("flash") && lower.includes("lite"))
+          return "gemini-3-1-flash-lite";
         if (lower.includes("gemini") && lower.includes("flash") && !lower.includes("lite")) {
           if (lower.includes("2.5") || lower.includes("2-5")) return "gemini-2-5-flash";
           return "gemini-3-flash";
@@ -1552,7 +1669,8 @@ export async function getUnifiedModelsResponse(
         // ── Open weights ───────────────────────────────────────────
         if (lower.includes("llama") && lower.includes("scout")) return "llama-4-scout";
         if (lower.includes("mistral") && lower.includes("small")) return "mistral-small";
-        if (lower.includes("ling") && (lower.includes("2.6") || lower.includes("2-6"))) return "ling-2-6";
+        if (lower.includes("ling") && (lower.includes("2.6") || lower.includes("2-6")))
+          return "ling-2-6";
         if (lower.includes("qwen") && !lower.includes("coder")) return "qwen3-6";
 
         // ── Other families ─────────────────────────────────────────
@@ -1606,18 +1724,34 @@ export async function getUnifiedModelsResponse(
     }
     // ──────────────────────────────────────────────────────────────────────
 
-    return Response.json(
-      {
-        object: "list",
-        data: outputModels,
+    // Codex CLI compatibility: its model-catalog refresh (codex_models_manager) does
+    // GET /v1/models?client_version=<v> and decodes a JSON object with a TOP-LEVEL
+    // `models` array, so the OpenAI-standard `{object,data}` shape makes it fail with
+    // "missing field `models`" and log "failed to refresh available models" on every
+    // startup. For codex clients only (detected by the codex originator/user-agent) we add
+    // an EMPTY `models: []` so the decode succeeds and the error disappears. Every other
+    // OpenAI consumer keeps the byte-identical `{object,data}` response.
+    //
+    // We deliberately keep it EMPTY rather than mirroring the catalog: codex replaces its
+    // built-in per-model agent prompt (`base_instructions`, ~21k chars) with whatever a
+    // populated entry carries for the selected model, so emitting our models with an
+    // empty/foreign `base_instructions` would drop codex's agent prompt to nothing and
+    // break its agent behavior (verified empirically against codex 0.137). An empty array
+    // keeps codex on its built-in model info — same inference as today, minus the error.
+    const responseBody: Record<string, unknown> = {
+      object: "list",
+      data: outputModels,
+    };
+    if (isCodexModelCatalogClient(request)) {
+      responseBody.models = [];
+    }
+
+    return Response.json(responseBody, {
+      headers: {
+        ...corsHeaders,
+        ...diagnosticHeaders,
       },
-      {
-        headers: {
-          ...corsHeaders,
-          ...diagnosticHeaders,
-        },
-      }
-    );
+    });
   } catch (error) {
     console.log("Error fetching models:", error);
     return Response.json(

@@ -38,6 +38,13 @@ export const WEB_SESSION_CREDENTIAL_REQUIREMENTS = {
     acceptsFullCookieHeader: true,
     storageKeys: ["cookie", "__Secure-1PSID", "__Secure-1PSIDTS"],
   },
+  "gemini-business": {
+    kind: "cookie",
+    credentialName: "__Secure-1PSID (optional: __Secure-1PSIDTS)",
+    placeholder: "__Secure-1PSID=...; __Secure-1PSIDTS=... (from business.gemini.google)",
+    acceptsFullCookieHeader: true,
+    storageKeys: ["cookie", "__Secure-1PSID", "__Secure-1PSIDTS"],
+  },
   "perplexity-web": {
     kind: "cookie",
     credentialName: "__Secure-next-auth.session-token",
@@ -151,11 +158,12 @@ export const WEB_SESSION_CREDENTIAL_REQUIREMENTS = {
     storageKeys: ["cookie", "session"],
   },
   "qwen-web": {
-    kind: "token",
-    credentialName: "token",
-    placeholder: "Paste your Qwen token from chat.qwen.ai (Local Storage → token)",
-    acceptsFullCookieHeader: false,
-    storageKeys: ["token", "tongyi_sso_ticket"],
+    kind: "cookie",
+    credentialName: "full Cookie header (must include cna, ssxmod_itna, token)",
+    placeholder:
+      "cna=...; token=...; ssxmod_itna=...; ssxmod_itna2=... (full Cookie header from chat.qwen.ai)",
+    acceptsFullCookieHeader: true,
+    storageKeys: ["cookie", "token", "ssxmod_itna", "ssxmod_itna2", "cna", "tongyi_sso_ticket"],
   },
   "duckduckgo-web": {
     kind: "cookie",
@@ -191,6 +199,15 @@ export const WEB_SESSION_CREDENTIAL_REQUIREMENTS = {
     placeholder: "manus_session=... or full Cookie header from manus.im",
     acceptsFullCookieHeader: true,
     storageKeys: ["cookie", "manus_session"],
+  },
+  lmarena: {
+    kind: "cookie",
+    // lmarena.ai's auth cookie is `arena-auth-prod-v1` (the legacy hint said `session`,
+    // which never matched the real cookie name and confused users). #3810
+    credentialName: "arena-auth-prod-v1",
+    placeholder: "arena-auth-prod-v1=... or full Cookie header from lmarena.ai",
+    acceptsFullCookieHeader: true,
+    storageKeys: ["cookie", "arena-auth-prod-v1", "session"],
   },
 } satisfies Record<keyof typeof WEB_COOKIE_PROVIDERS, WebSessionCredentialRequirement>;
 

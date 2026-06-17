@@ -15,6 +15,10 @@ export interface ModelSpec {
   supportsThinking?: boolean;
   supportsTools?: boolean;
   supportsVision?: boolean;
+  // Model defaults to adaptive thinking and REJECTS an explicit `thinking.type:"disabled"`
+  // (upstream returns 400). Used to normalize the request when a combo/route substitutes
+  // this model after the client already chose `disabled`. See issue #3554.
+  rejectsThinkingDisabled?: boolean;
 }
 
 const BEDROCK_CLAUDE_ALIASES = (...modelIds: string[]) => [
@@ -73,6 +77,9 @@ export const MODEL_SPECS: Record<string, ModelSpec> = {
   "gemini-2.5-flash": {
     maxOutputTokens: 65536,
     contextWindow: 1048576,
+    // #3842: real Google max thinking budget for 2.5-flash is 24576; declaring the
+    // cap makes capThinkingBudget() actually clamp instead of passing values through.
+    thinkingBudgetCap: 24576,
     supportsThinking: false,
     supportsTools: true,
     supportsVision: true,
@@ -212,6 +219,20 @@ export const MODEL_SPECS: Record<string, ModelSpec> = {
     aliases: BEDROCK_CLAUDE_ALIASES("claude-opus-4-7", "claude-opus-4.7"),
   },
 
+  // ── Claude Fable 5 ──────────────────────────────────────────────
+  "claude-fable-5": {
+    maxOutputTokens: 128000,
+    contextWindow: 1000000,
+    defaultThinkingBudget: 32000,
+    thinkingBudgetCap: 120000,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    // Fable 5 defaults to adaptive thinking and rejects `thinking.type:"disabled"` (#3554).
+    rejectsThinkingDisabled: true,
+    aliases: BEDROCK_CLAUDE_ALIASES("claude-fable-5"),
+  },
+
   // ── Claude Opus 4.8 ─────────────────────────────────────────────
   "claude-opus-4-8": {
     maxOutputTokens: 128000,
@@ -254,6 +275,18 @@ export const MODEL_SPECS: Record<string, ModelSpec> = {
     supportsTools: true,
     supportsVision: true,
     aliases: ["kimi-k2.6-thinking", "kimi-for-coding"],
+  },
+
+  // ── Kimi K2.7 Code (Moonshot — 262K native, parity with K2.6) ───
+  // #3761: importing this via Ollama Cloud's sparse /v1/models gave it no caps, so it
+  // fell back to the 128K/8K defaults and lost vision/thinking. Pin the real values.
+  "kimi-k2.7-code": {
+    maxOutputTokens: 262144,
+    contextWindow: 262144,
+    supportsThinking: true,
+    supportsTools: true,
+    supportsVision: true,
+    aliases: ["kimi-k2.7", "kimi-k2.7-code-thinking"],
   },
 
   // ── Kimi K2.5 (Moonshot — 262K native, parity with K2.6) ────────
@@ -318,6 +351,26 @@ export const MODEL_SPECS: Record<string, ModelSpec> = {
   "mimo-v2-flash": {
     maxOutputTokens: 65536,
     contextWindow: 262144,
+    supportsTools: true,
+  },
+
+  // ── Z.AI GLM-5.2 (1M context, 128K max output, effort tiers) ────
+  "glm-5.2": {
+    maxOutputTokens: 131072,
+    contextWindow: 1000000,
+    supportsThinking: true,
+    supportsTools: true,
+  },
+  "glm-5.2-high": {
+    maxOutputTokens: 131072,
+    contextWindow: 1000000,
+    supportsThinking: true,
+    supportsTools: true,
+  },
+  "glm-5.2-max": {
+    maxOutputTokens: 131072,
+    contextWindow: 1000000,
+    supportsThinking: true,
     supportsTools: true,
   },
 
@@ -413,6 +466,34 @@ export function getModelSpec(modelId: string): ModelSpec | undefined {
   }
 
   return undefined;
+}
+
+/**
+ * Normalize a request's `thinking` field against the (possibly combo-substituted) target model.
+ *
+ * A combo/route can swap the upstream model AFTER the client already chose its `thinking`
+ * value. Claude Code sends `thinking:{type:"disabled"}` for internal title/name-generation
+ * calls — valid for opus/sonnet, but claude-fable-5 defaults to adaptive thinking and rejects
+ * `type:"disabled"` with an upstream 400. When the resolved target model is flagged
+ * `rejectsThinkingDisabled`, drop the now-invalid `thinking` so the model uses its adaptive
+ * default instead of hard-failing. Models that accept `disabled` are left untouched, and any
+ * non-`disabled` thinking (enabled/adaptive) is always preserved. See issue #3554.
+ */
+export function normalizeThinkingForModel<T extends Record<string, unknown>>(
+  body: T,
+  modelId: string
+): T {
+  const thinking = body?.thinking as Record<string, unknown> | undefined;
+  if (
+    thinking &&
+    typeof thinking === "object" &&
+    thinking.type === "disabled" &&
+    getModelSpec(modelId)?.rejectsThinkingDisabled
+  ) {
+    const { thinking: _omitted, ...rest } = body as Record<string, unknown>;
+    return rest as T;
+  }
+  return body;
 }
 
 export function capMaxOutputTokens(modelId: string, requested?: number): number {

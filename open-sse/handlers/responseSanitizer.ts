@@ -170,9 +170,16 @@ function parseTextualToolCallContent(content: unknown): { name: string; args: un
   return null;
 }
 
+// Matches the exact header format required by parseTextualToolCallContent:
+// "[Tool call: name]\nArguments:" (with optional whitespace).  Using the full
+// header pattern prevents false positives when the model quotes "[Tool call:"
+// in prose, code examples, or terminal output (#3355).
+const TEXTUAL_TOOL_CALL_HEADER = /\[Tool call:[^\]\n]+\]\s*\nArguments:/;
+
 function containsTextualToolCallContent(content: unknown): boolean {
   return (
-    typeof content === "string" && stripInternalToolEnvelopeText(content).includes("[Tool call:")
+    typeof content === "string" &&
+    TEXTUAL_TOOL_CALL_HEADER.test(stripInternalToolEnvelopeText(content))
   );
 }
 
@@ -193,8 +200,20 @@ function hasVisibleMessageContent(content: unknown): boolean {
   });
 }
 
-// Matches <think>...</think> blocks and <thinking>...</thinking> (greedy, dotAll)
-const THINK_TAG_REGEX = /<(?:think|thinking)>([\s\S]*?)<\/(?:think|thinking)>/gi;
+const REASONING_TAG_NAMES = ["think", "thinking", "thought", "internal_thought"];
+const REASONING_TAG_PATTERN = REASONING_TAG_NAMES.join("|");
+// Matches complete <think>/<thinking>/<thought>/<internal_thought> blocks.
+const THINK_TAG_REGEX = new RegExp(
+  `<(${REASONING_TAG_PATTERN})\\b[^>]*>([\\s\\S]*?)<\\/\\1>`,
+  "gi"
+);
+// Matches an unclosed reasoning tag at the end of a message. Some providers can
+// emit malformed/open reasoning wrappers (for example "<thought\n...") before a
+// tool call. Treat that tail as reasoning instead of visible assistant text.
+const UNCLOSED_REASONING_TAG_REGEX = new RegExp(
+  `<(${REASONING_TAG_PATTERN})(?:\\s[^>]*)?(?:>|\\r?\\n)([\\s\\S]*)$`,
+  "i"
+);
 
 // #638, #727: Collapse runs of 2+ consecutive newlines into \n\n
 // Tool call responses from thinking models often accumulate excessive newlines
@@ -218,7 +237,7 @@ export function extractThinkingFromContent(text: string): {
   const thinkingParts: string[] = [];
   let hasThinkTags = false;
 
-  const cleaned = text.replace(THINK_TAG_REGEX, (_, thinkContent) => {
+  let cleaned = text.replace(THINK_TAG_REGEX, (_match, _tagName, thinkContent) => {
     hasThinkTags = true;
     const trimmed = thinkContent.trim();
     if (trimmed) {
@@ -226,6 +245,15 @@ export function extractThinkingFromContent(text: string): {
     }
     return "";
   });
+
+  const unclosedMatch = cleaned.match(UNCLOSED_REASONING_TAG_REGEX);
+  if (unclosedMatch?.index !== undefined) {
+    hasThinkTags = true;
+    const reasoning = String(unclosedMatch[2] || "").trim();
+    if (reasoning) thinkingParts.push(reasoning);
+    const prefix = cleaned.slice(0, unclosedMatch.index);
+    cleaned = /^(?:\s|§\d+§)*$/.test(prefix) ? "" : prefix;
+  }
 
   if (!hasThinkTags) {
     return { content: text, thinking: null };
@@ -978,8 +1006,12 @@ export function sanitizeStreamingChunk(parsed: unknown): unknown {
   // Build sanitized chunk
   const sanitized: JsonRecord = {};
 
-  // Keep only standard fields
-  if (parsedRecord.id !== undefined) sanitized.id = parsedRecord.id;
+  // Keep only standard fields — normalize id to string to avoid AI_InvalidResponseDataError
+  if (parsedRecord.id !== undefined && parsedRecord.id !== null) {
+    sanitized.id = normalizeResponseId(
+      typeof parsedRecord.id === "string" ? parsedRecord.id : String(parsedRecord.id)
+    );
+  }
   sanitized.object = toString(parsedRecord.object) || "chat.completion.chunk";
   if (parsedRecord.created !== undefined) sanitized.created = parsedRecord.created;
   if (parsedRecord.model !== undefined) sanitized.model = parsedRecord.model;
@@ -1030,7 +1062,18 @@ export function sanitizeStreamingChunk(parsed: unknown): unknown {
               delta.reasoning_content = parts.join("");
             }
           }
-          if (deltaRecord.tool_calls !== undefined) delta.tool_calls = deltaRecord.tool_calls;
+          if (deltaRecord.tool_calls !== undefined) {
+            delta.tool_calls = Array.isArray(deltaRecord.tool_calls)
+              ? deltaRecord.tool_calls.map((tc) => {
+                  const t = toRecord(tc);
+                  if (!t) return tc;
+                  if (t.id !== undefined && t.id !== null && typeof t.id !== "string") {
+                    return { ...t, id: String(t.id) };
+                  }
+                  return t;
+                })
+              : deltaRecord.tool_calls;
+          }
           if (deltaRecord.function_call !== undefined)
             delta.function_call = deltaRecord.function_call;
           c.delta = delta;

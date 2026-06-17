@@ -331,9 +331,7 @@ test("handleChat injects context-relay handoffs during live failover for Respons
   assert.equal(secondResponse.status, 200);
 
   const relayedSecondaryCall = upstreamBodies.find(
-    (call) =>
-      call.authHeader === "Bearer token-b" &&
-      typeof call.body.instructions === "string"
+    (call) => call.authHeader === "Bearer token-b" && typeof call.body.instructions === "string"
   );
 
   assert.ok(relayedSecondaryCall, "secondary account should receive a request after primary 429");
@@ -343,6 +341,19 @@ test("handleChat injects context-relay handoffs during live failover for Respons
     "Continue from where you left off"
   );
   assert.match(relayedSecondaryCall.body.instructions, /Continue with the current task/);
-  // Handoff persists in DB because emergency fallback doesn't consume it
-  assert.ok(handoffDb.getHandoff(sessionId, "relay-live-combo"));
+  // The failover request must still target the requested model — the old
+  // emergency-fallback detour silently swapped it for openai/gpt-oss-120b.
+  assert.notEqual(relayedSecondaryCall.body.model, "openai/gpt-oss-120b");
+  // The account switch must deliver the stored handoff to the secondary account
+  // (the whole point of context-relay). Before the emergency-fallback fix the
+  // switch happened inside the emergency detour with comboStrategy=null, so the
+  // handoff was never injected — and therefore never consumed.
+  assert.match(
+    relayedSecondaryCall.serializedBody,
+    /Carry over the Responses-native Codex session/,
+    "handoff summary must be injected into the secondary account's request"
+  );
+  // Delivered handoffs are one-shot: consumed (deleted) after a successful
+  // injected request (src/sse/handlers/chat.ts deleteHandoff-on-success).
+  assert.equal(handoffDb.getHandoff(sessionId, "relay-live-combo"), null);
 });
