@@ -203,6 +203,12 @@ const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "096",
     toName: "daily_usage_summary_api_keys",
   },
+  {
+    fromVersion: "096",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "100",
+    toName: "daily_usage_summary_api_keys",
+  },
 ] as const;
 
 const LEGACY_VERSION_SLOT_MIGRATIONS = [
