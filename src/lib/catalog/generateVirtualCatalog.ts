@@ -133,7 +133,7 @@ const BLOCKLISTED_ROOT_IDS = new Set([
   "trinity-large-preview-free",
   "pepper-1",
   "gemini-pro-agent",
-  "gpt-5-2",   // superceded
+  "gpt-5-2", // superceded
 ]);
 
 // Provider prefixes whose models should be hidden entirely unless consolidated
@@ -179,24 +179,40 @@ export function getCanonicalRootId(rootId: string): string {
   // ── GPT family ─────────────────────────────────────────────
   if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
   if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
-  if (lower.includes("gpt-5.5-high") || lower.includes("gpt-5-5-high") || lower.includes("gpt-5.5-xhigh") || lower.includes("gpt-5-5-xhigh")) {
+  if (
+    lower.includes("gpt-5.5-high") ||
+    lower.includes("gpt-5-5-high") ||
+    lower.includes("gpt-5.5-xhigh") ||
+    lower.includes("gpt-5-5-xhigh")
+  ) {
     return "gpt-5-5-high";
   }
-  if ((lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) && !lower.includes("high")) {
+  if (
+    (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) &&
+    !lower.includes("high")
+  ) {
     return "gpt-5-5";
   }
-  if (lower.includes("gpt-5.4-high") || lower.includes("gpt-5-4-high") || lower.includes("gpt-5.4-xhigh") || lower.includes("gpt-5-4-xhigh")) {
+  if (
+    lower.includes("gpt-5.4-high") ||
+    lower.includes("gpt-5-4-high") ||
+    lower.includes("gpt-5.4-xhigh") ||
+    lower.includes("gpt-5-4-xhigh")
+  ) {
     return "gpt-5-4-high";
   }
   if (
     (lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) &&
-    !lower.includes("mini") && !lower.includes("high")
+    !lower.includes("mini") &&
+    !lower.includes("high")
   ) {
     return "gpt-5-4";
   }
   if (
-    lower.includes("gpt-5.4-mini") || lower.includes("gpt-5-4-mini") ||
-    lower.includes("gpt-5-mini") || lower.includes("gpt-5.mini") ||
+    lower.includes("gpt-5.4-mini") ||
+    lower.includes("gpt-5-4-mini") ||
+    lower.includes("gpt-5-mini") ||
+    lower.includes("gpt-5.mini") ||
     lower.includes("gpt-4o-mini")
   ) {
     return "gpt-5-4-mini";
@@ -210,11 +226,19 @@ export function getCanonicalRootId(rootId: string): string {
 
   // ── Gemini family ──────────────────────────────────────────
   if (
-    lower.includes("gemini") && lower.includes("pro") &&
-    !lower.includes("flash") && !lower.includes("lite") && !lower.includes("agent")
+    lower.includes("gemini") &&
+    lower.includes("pro") &&
+    !lower.includes("flash") &&
+    !lower.includes("lite") &&
+    !lower.includes("agent")
   ) {
     // gemini 3.1 pro variants
-    if (lower.includes("3.1") || lower.includes("3-1") || lower.includes("3_pro") || lower.includes("gemini_3_pro")) {
+    if (
+      lower.includes("3.1") ||
+      lower.includes("3-1") ||
+      lower.includes("3_pro") ||
+      lower.includes("gemini_3_pro")
+    ) {
       return "gemini-3-1-pro";
     }
     if (lower.includes("2.5") || lower.includes("2-5")) {
@@ -261,7 +285,8 @@ export function isBlocklistedForCatalog(rootId: string, providerPrefix: string):
   const lower = rootId.toLowerCase();
   if (lower.includes("codex-auto-review") || lower.includes("codex_auto")) return true;
   if (lower === "gpt-5-2" || lower === "gpt-5.2") return true;
-  if (lower.includes("codex-spark") || lower.includes("3-codex") || lower.includes("3.codex")) return true;
+  if (lower.includes("codex-spark") || lower.includes("3-codex") || lower.includes("3.codex"))
+    return true;
   return false;
 }
 
@@ -627,13 +652,8 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
 
   // 4. Create new combos + mappings for each grouped model
   for (const [rootId, variants] of grouped) {
-    // Only consolidate if the model is available from more than one provider,
-    // OR if it belongs to the forced consolidation list (Claude, Minimax 2.7, Kimi K2.6, etc.)
+    // Consolidate all chat models to expose them prefix-free under the virtual catalog.
     const uniqueProviders = new Set(variants.map((v) => v.providerId));
-
-    if (uniqueProviders.size <= 1 && !FORCED_CONSOLIDATION_MODELS.has(rootId)) {
-      continue;
-    }
 
     // Sanitize the root ID for use as a combo name (handles slashes, special chars)
     const comboName = sanitizeComboName(rootId);
@@ -760,8 +780,12 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       }
       if (rootId === "gpt-5-5-high") {
         const extraPatterns = [
-          "gpt-5-5-high", "gpt-5.5-high", "gpt-5-5-xhigh", "gpt-5.5-xhigh",
-          "openai/gpt-5.5-high", "openai/gpt-5-5-high",
+          "gpt-5-5-high",
+          "gpt-5.5-high",
+          "gpt-5-5-xhigh",
+          "gpt-5.5-xhigh",
+          "openai/gpt-5.5-high",
+          "openai/gpt-5-5-high",
         ];
         for (const p of extraPatterns) {
           try {
@@ -777,8 +801,12 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       }
       if (rootId === "gpt-5-4-high") {
         const extraPatterns = [
-          "gpt-5-4-high", "gpt-5.4-high", "gpt-5-4-xhigh", "gpt-5.4-xhigh",
-          "openai/gpt-5.4-high", "openai/gpt-5-4-high",
+          "gpt-5-4-high",
+          "gpt-5.4-high",
+          "gpt-5-4-xhigh",
+          "gpt-5.4-xhigh",
+          "openai/gpt-5.4-high",
+          "openai/gpt-5-4-high",
         ];
         for (const p of extraPatterns) {
           try {
@@ -794,8 +822,11 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       }
       if (rootId === "kimi-k2") {
         const extraPatterns = [
-          "kimi-k2", "kimi-k2.6", "kimi-k2-6",
-          "moonshotai/kimi-k2.6:free", "moonshotai/kimi-k2.6",
+          "kimi-k2",
+          "kimi-k2.6",
+          "kimi-k2-6",
+          "moonshotai/kimi-k2.6:free",
+          "moonshotai/kimi-k2.6",
         ];
         for (const p of extraPatterns) {
           try {
@@ -811,8 +842,13 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       }
       if (rootId === "minimax-m3") {
         const extraPatterns = [
-          "minimax-m3", "minimax-m2", "minimax-m2.1", "minimax-m2.5", "minimax-m2.7",
-          "minimax/minimax-m2.5:free", "minimaxai/minimax-m2.7",
+          "minimax-m3",
+          "minimax-m2",
+          "minimax-m2.1",
+          "minimax-m2.5",
+          "minimax-m2.7",
+          "minimax/minimax-m2.5:free",
+          "minimaxai/minimax-m2.7",
         ];
         for (const p of extraPatterns) {
           try {
@@ -842,8 +878,12 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       }
       if (rootId === "claude-sonnet-4-6") {
         const extraPatterns = [
-          "claude-sonnet-4-6", "claude-sonnet-4.6", "claude-sonnet-4.5", "claude-sonnet-4.0",
-          "claude-sonnet-4-6-thinking", "claude-sonnet-4.6-thinking"
+          "claude-sonnet-4-6",
+          "claude-sonnet-4.6",
+          "claude-sonnet-4.5",
+          "claude-sonnet-4.0",
+          "claude-sonnet-4-6-thinking",
+          "claude-sonnet-4.6-thinking",
         ];
         for (const p of extraPatterns) {
           try {
@@ -859,10 +899,16 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       }
       if (rootId === "claude-opus-4-7") {
         const extraPatterns = [
-          "claude-opus-4-7", "claude-opus-4.7", "claude-opus-4-6", "claude-opus-4.6",
-          "claude-opus-4.5", "claude-opus-4-5-20251101",
-          "claude-opus-4-7-thinking", "claude-opus-4.7-thinking",
-          "claude-opus-4-6-thinking", "claude-opus-4.6-thinking",
+          "claude-opus-4-7",
+          "claude-opus-4.7",
+          "claude-opus-4-6",
+          "claude-opus-4.6",
+          "claude-opus-4.5",
+          "claude-opus-4-5-20251101",
+          "claude-opus-4-7-thinking",
+          "claude-opus-4.7-thinking",
+          "claude-opus-4-6-thinking",
+          "claude-opus-4.6-thinking",
         ];
         for (const p of extraPatterns) {
           try {

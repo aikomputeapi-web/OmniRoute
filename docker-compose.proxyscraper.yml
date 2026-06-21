@@ -1,34 +1,49 @@
-version: '3.8'
-
 services:
   proxy-scraper:
-    image: ubuntu:24.04
+    build:
+      context: ./proxy_scraper_build
+      dockerfile: Dockerfile
     container_name: omniroute-proxy-scraper
     restart: unless-stopped
-    working_dir: /app
+    init: true
+    tty: false
+    stdin_open: false
+    working_dir: /home/app
     volumes:
       - ./proxy_scraper_data:/app/data
       - ./proxy_scraper_config:/app/config
-    environment:
-      - DEBIAN_FRONTEND=noninteractive
-    command: >
-      bash -c "
-      apt-get update -qq &&
-      apt-get install -y -qq wget ca-certificates &&
-      cd /app &&
-      wget -q https://github.com/monosans/proxy-scraper-checker/releases/latest/download/proxy-scraper-checker-linux-amd64 -O proxy-scraper-checker &&
-      chmod +x proxy-scraper-checker &&
-      mkdir -p /app/data/proxies &&
-      cd /app/data &&
-      while true; do
-        echo '[$(date)] Starting proxy scrape and validation (USA only)...' &&
-        /app/proxy-scraper-checker --output-folder ./proxies --timeout 5 --sources https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt --countries US &&
-        echo '[$(date)] Scrape complete. Sleeping for 1 hour...' &&
-        sleep 3600
-      done
-      "
+    command:
+      - bash
+      - -c
+      - |
+        set -ex
+        # Create a symlink to config in home directory (writable by app user)
+        if [ -f /app/config/config.toml ]; then
+          ln -sf /app/config/config.toml /home/app/config.toml
+        fi
+        mkdir -p /app/data/out
+        while true; do
+          echo "[$(date)] Starting proxy scrape and validation..."
+          /app/proxy-scraper-checker --config /home/app/config.toml || true
+          # Copy output files to mounted volume
+          cp -f /home/app/out/proxies/http.txt /app/data/out/ 2>/dev/null || true
+          cp -f /home/app/out/proxies/socks4.txt /app/data/out/ 2>/dev/null || true
+          cp -f /home/app/out/proxies/socks5.txt /app/data/out/ 2>/dev/null || true
+          cp -f /home/app/out/proxies/all.txt /app/data/out/ 2>/dev/null || true
+          cp -f /home/app/out/proxies.json /app/data/out/ 2>/dev/null || true
+          cp -f /home/app/out/proxies_pretty.json /app/data/out/ 2>/dev/null || true
+          # Auto-sync proxies to OmniRoute
+          echo "[$(date)] Syncing proxies to OmniRoute..."
+          curl -s -X POST http://host.docker.internal:3000/api/settings/free-proxies/sync \
+            -H 'Content-Type: application/json' \
+            -d '{"sources": ["proxyscraper"]}' || true
+          echo "[$(date)] Scrape complete. Sleeping for 1 hour..."
+          sleep 3600
+        done
     networks:
       - omniroute-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 networks:
   omniroute-network:

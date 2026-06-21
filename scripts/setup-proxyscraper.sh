@@ -18,11 +18,11 @@ fi
 # Add configuration to .env if not present
 if ! grep -q "FREE_PROXY_SCRAPER_ENABLED" .env; then
   echo "" >> .env
-  echo "# Proxy Scraper Configuration" >> .env
+  echo "# Proxy Scraper Configuration (Rust rewrite v2.x)" >> .env
   echo "FREE_PROXY_SCRAPER_ENABLED=true" >> .env
-  echo "FREE_PROXY_SCRAPER_HTTP_FILE=./proxy_scraper_data/proxies/http.txt" >> .env
-  echo "FREE_PROXY_SCRAPER_SOCKS4_FILE=./proxy_scraper_data/proxies/socks4.txt" >> .env
-  echo "FREE_PROXY_SCRAPER_SOCKS5_FILE=./proxy_scraper_data/proxies/socks5.txt" >> .env
+  echo "FREE_PROXY_SCRAPER_HTTP_FILE=./proxy_scraper_data/out/http.txt" >> .env
+  echo "FREE_PROXY_SCRAPER_SOCKS4_FILE=./proxy_scraper_data/out/socks4.txt" >> .env
+  echo "FREE_PROXY_SCRAPER_SOCKS5_FILE=./proxy_scraper_data/out/socks5.txt" >> .env
   echo "FREE_PROXY_SCRAPER_MAX=1000" >> .env
   echo "✅ Added proxy scraper configuration to .env"
 else

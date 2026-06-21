@@ -66,6 +66,8 @@ export class ProxiflyProvider implements FreeProxyProvider {
     const { upsertFreeProxy } = await import("../db/freeProxies");
     const quantity = parsePositiveInt(process.env.FREE_PROXY_PROXIFLY_QUANTITY, DEFAULT_QUANTITY);
     const anonymity = process.env.FREE_PROXY_PROXIFLY_ANONYMITY || DEFAULT_ANONYMITY;
+    // When FREE_PROXY_COUNTRY_FILTER is set (default: US), only store matching proxies.
+    const countryFilter = (process.env.FREE_PROXY_COUNTRY_FILTER ?? "US").toUpperCase() || null;
 
     const errors: string[] = [];
     let added = 0;
@@ -81,6 +83,8 @@ export class ProxiflyProvider implements FreeProxyProvider {
         url.searchParams.set("quantity", String(batchQuantity));
         url.searchParams.set("protocol", DEFAULT_PROTOCOL);
         url.searchParams.set("anonymity", anonymity);
+        // Request US proxies directly from Proxifly API when filter is active
+        if (countryFilter) url.searchParams.set("country", countryFilter);
 
         const res = await fetch(url, {
           signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
@@ -102,15 +106,18 @@ export class ProxiflyProvider implements FreeProxyProvider {
             errors.push(`Proxifly: skipped private/loopback host ${p.ip}`);
             continue;
           }
+          const resolvedCountry =
+            p.geolocation?.country?.slice(0, 2).toUpperCase() ||
+            p.country?.slice(0, 2).toUpperCase() ||
+            null;
+          // Skip proxies that don't match the country filter (default: US only)
+          if (countryFilter && resolvedCountry && resolvedCountry !== countryFilter) continue;
           const item: FreeProxyItem = {
             source: "proxifly",
             host: p.ip,
             port: Number(p.port),
             type: normalizeProxyType(p.protocol),
-            countryCode:
-              p.geolocation?.country?.slice(0, 2).toUpperCase() ||
-              p.country?.slice(0, 2).toUpperCase() ||
-              null,
+            countryCode: resolvedCountry,
             qualityScore: normalizeQualityScore(p),
             latencyMs: null,
             anonymity: p.anonymity || null,

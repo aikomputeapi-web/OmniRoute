@@ -38,6 +38,80 @@ async function defaultEgressProbe(proxyUrl: string | null): Promise<EgressProbeR
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), EGRESS_PROBE_TIMEOUT_MS);
   try {
+    if (proxyUrl) {
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(proxyUrl);
+      } catch {}
+      if (parsedUrl) {
+        const { getDbInstance } = require("./db/core");
+        const db = getDbInstance();
+        const dbProxy = db
+          .prepare("SELECT type, notes, password FROM proxy_registry WHERE host = ? LIMIT 1")
+          .get(parsedUrl.hostname) as
+          | { type: string; notes: string | null; password?: string }
+          | undefined;
+
+        if (dbProxy) {
+          const type = dbProxy.type;
+          if (type === "vercel" || type === "gcp") {
+            const headers: Record<string, string> = {
+              "x-relay-target": "https://api64.ipify.org",
+              "x-relay-path": "/?format=json",
+            };
+            if (type === "vercel") {
+              let relayAuth = "";
+              if (dbProxy.notes) {
+                try {
+                  const parsed = JSON.parse(dbProxy.notes);
+                  relayAuth = parsed.relayAuth || "";
+                } catch {}
+              }
+              if (!relayAuth) relayAuth = dbProxy.password || "";
+              headers["x-relay-auth"] = relayAuth;
+            } else if (type === "gcp") {
+              let token = "";
+              try {
+                const mController = new AbortController();
+                const mTimeoutId = setTimeout(() => mController.abort(), 2000);
+                const metadataUrl = `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(proxyUrl)}`;
+                const tokenRes = await undiciRequest(metadataUrl, {
+                  method: "GET",
+                  headers: { "Metadata-Flavor": "Google" },
+                  signal: mController.signal,
+                  headersTimeout: 2000,
+                  bodyTimeout: 2000,
+                });
+                clearTimeout(mTimeoutId);
+                if (tokenRes.statusCode === 200) {
+                  token = (await tokenRes.body.text()).trim();
+                }
+              } catch (metadataErr) {
+                console.warn(`[ProxyEgress] Failed to fetch GCP token: ${metadataErr}`);
+              }
+              if (token) {
+                headers["Authorization"] = `Bearer ${token}`;
+              }
+            }
+
+            const res = await undiciRequest(proxyUrl, {
+              method: "GET",
+              headers,
+              signal: controller.signal,
+              headersTimeout: EGRESS_PROBE_TIMEOUT_MS,
+              bodyTimeout: EGRESS_PROBE_TIMEOUT_MS,
+            });
+            const text = await res.body.text();
+            let ip: string | null = null;
+            try {
+              ip = (JSON.parse(text) as { ip?: string }).ip ?? null;
+            } catch {}
+            return { ip, latencyMs: Date.now() - start };
+          }
+        }
+      }
+    }
+
     const dispatcher = proxyUrl ? createProxyDispatcher(proxyUrl) : undefined;
     const res = await undiciRequest(EGRESS_ECHO_URL, {
       method: "GET",

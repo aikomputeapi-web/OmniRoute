@@ -141,6 +141,77 @@ export async function POST(request: Request) {
       }
     }
 
+    // GCP Relay: test by hitting ipify via the relay headers
+    if (proxyType === "gcp") {
+      const relayHost = proxy.host;
+      const relayUrl = `https://${relayHost}`;
+      const start = Date.now();
+      const controller2 = new AbortController();
+      const timeout2 = setTimeout(() => controller2.abort(), 10000);
+      try {
+        let token = "";
+        try {
+          const mController = new AbortController();
+          const mTimeoutId = setTimeout(() => mController.abort(), 2000);
+          const metadataUrl = `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(relayUrl)}`;
+          const tokenRes = await undiciRequest(metadataUrl, {
+            method: "GET",
+            headers: { "Metadata-Flavor": "Google" },
+            signal: mController.signal,
+            headersTimeout: 2000,
+            bodyTimeout: 2000,
+          });
+          clearTimeout(mTimeoutId);
+          if (tokenRes.statusCode === 200) {
+            token = (await tokenRes.body.text()).trim();
+          }
+        } catch (metadataErr) {
+          console.warn(
+            `[ProxyTest] Failed to fetch token from GCP Metadata server: ${metadataErr instanceof Error ? metadataErr.message : String(metadataErr)}`
+          );
+        }
+
+        const headers: Record<string, string> = {
+          "x-relay-target": "https://api64.ipify.org",
+          "x-relay-path": "/?format=json",
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
+        const res = await undiciRequest(`${relayUrl}/`, {
+          method: "GET",
+          signal: controller2.signal,
+          headersTimeout: 10000,
+          bodyTimeout: 10000,
+          headers,
+        });
+        const text = await res.body.text();
+        let parsedIp: { ip?: string } = {};
+        try {
+          parsedIp = JSON.parse(text) as { ip?: string };
+        } catch {}
+        return Response.json({
+          success: res.statusCode === 200,
+          publicIp: parsedIp.ip || null,
+          latencyMs: Date.now() - start,
+          proxyUrl: relayUrl,
+        });
+      } catch (relayErr) {
+        return Response.json({
+          success: false,
+          error:
+            relayErr instanceof Error && relayErr.name === "AbortError"
+              ? "Connection timeout (10s)"
+              : getErrorMessage(relayErr, "Relay test failed"),
+          latencyMs: Date.now() - start,
+          proxyUrl: relayUrl,
+        });
+      } finally {
+        clearTimeout(timeout2);
+      }
+    }
+
     if (proxyType === "socks5" && !isSocks5ProxyEnabled()) {
       return createErrorResponse({
         status: 400,

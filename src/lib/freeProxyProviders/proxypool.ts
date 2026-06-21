@@ -13,7 +13,8 @@ export class ProxyPoolProvider implements FreeProxyProvider {
   readonly name = "ProxyPool";
 
   isEnabled(): boolean {
-    return process.env.FREE_PROXY_PROXYPOOL_ENABLED === "true";
+    // Default ON — opt out with FREE_PROXY_PROXYPOOL_ENABLED=false
+    return process.env.FREE_PROXY_PROXYPOOL_ENABLED !== "false";
   }
 
   private getConfig() {

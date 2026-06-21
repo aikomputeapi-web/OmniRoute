@@ -11,6 +11,7 @@ import { fetch as undiciFetch } from "undici";
 import { createProxyDispatcher, normalizeProxyUrl } from "./proxyDispatcher.ts";
 import { resolveProxyForScopeFromRegistry, listProxies, listOneproxyProxies } from "@/lib/localDb";
 import { isFeatureFlagEnabled } from "@/shared/utils/featureFlags";
+import { listFreeProxies } from "@/lib/db/freeProxies";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,10 +53,9 @@ export function clearProxyFallbackCache(): void {
  * Build a full proxy URL string from a proxy record's fields.
  */
 function proxyRecordToUrl(proxy: ProxyShape): string {
-  const auth =
-    proxy.username
-      ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || "")}@`
-      : "";
+  const auth = proxy.username
+    ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || "")}@`
+    : "";
   return `${proxy.type}://${auth}${proxy.host}:${proxy.port}`;
 }
 
@@ -173,7 +173,20 @@ export async function getProxyCandidates(targetUrl?: string): Promise<string[]> 
     // Table may not exist yet
   }
 
-  // 4. Environment proxy (needs targetUrl to determine protocol)
+  // 4. Top USA free proxies from the free_proxies table (sorted by quality desc)
+  //    These are sourced and pre-validated by the freeProxyJob background scheduler.
+  try {
+    const usaFreeProxies = await listFreeProxies({ country: "US", limit: 10 });
+    for (const p of usaFreeProxies) {
+      if (p.host && p.port) {
+        candidates.add(`${p.type}://${p.host}:${p.port}`);
+      }
+    }
+  } catch {
+    // free_proxies table may not exist yet
+  }
+
+  // 5. Environment proxy (needs targetUrl to determine protocol)
   if (targetUrl) {
     try {
       const envProxy = resolveEnvProxyUrl(targetUrl);
@@ -252,9 +265,7 @@ export async function testProxiesAgainstTarget(
   );
 
   return results.map((r) =>
-    r.status === "fulfilled"
-      ? r.value
-      : { proxyUrl: "unknown", ok: false, latencyMs: null }
+    r.status === "fulfilled" ? r.value : { proxyUrl: "unknown", ok: false, latencyMs: null }
   );
 }
 
@@ -304,9 +315,7 @@ export async function findWorkingProxy(
     })
   );
 
-  const working = results.find(
-    (r) => r.status === "fulfilled" && r.value.ok
-  );
+  const working = results.find((r) => r.status === "fulfilled" && r.value.ok);
 
   if (working && working.status === "fulfilled") {
     const proxyUrl = working.value.proxyUrl;
@@ -340,9 +349,7 @@ export async function findWorkingProxy(
  * @param _connectionId  Optional connection ID (reserved for future use).
  * @returns A proxy resolution result with level "autoSelect", or null.
  */
-export async function selectWorkingProxyFallback(
-  _connectionId?: string
-): Promise<{
+export async function selectWorkingProxyFallback(_connectionId?: string): Promise<{
   proxy: { type: string; host: string; port: number; username: string; password: string } | null;
   level: string;
   levelId: string | null;
@@ -354,7 +361,23 @@ export async function selectWorkingProxyFallback(
   // operator explicitly enables PROXY_AUTO_SELECT_ENABLED.
   if (!isFeatureFlagEnabled("PROXY_AUTO_SELECT_ENABLED")) return null;
 
-  const candidates = await getProxyCandidates();
+  // Build a USA-first candidate list: pull US free proxies first, then fall
+  // back to the full candidate pool so selection is always US-preferring.
+  let candidates: string[] = [];
+  try {
+    const usaFreeProxies = await listFreeProxies({ country: "US", limit: 20 });
+    for (const p of usaFreeProxies) {
+      if (p.host && p.port) candidates.push(`${p.type}://${p.host}:${p.port}`);
+    }
+  } catch {
+    // free_proxies table may not exist yet — fall through to full pool
+  }
+
+  // If no USA free proxies in the table, fall back to all candidates
+  if (candidates.length === 0) {
+    candidates = await getProxyCandidates();
+  }
+
   if (candidates.length === 0) return null;
 
   // Use a well-known AI API endpoint as the test target. If a proxy can
@@ -362,7 +385,25 @@ export async function selectWorkingProxyFallback(
   const targetUrl = "https://api.openai.com/v1/models";
   const targetHostname = "api.openai.com";
 
-  const workingUrl = await findWorkingProxy(targetHostname, targetUrl);
+  // Test all USA candidates in parallel; pick first working one
+  const results = await Promise.allSettled(
+    candidates.slice(0, 10).map(async (proxyUrl) => {
+      const { ok, latencyMs } = await testSingleProxy(proxyUrl, targetUrl, 5000);
+      return { proxyUrl, ok, latencyMs };
+    })
+  );
+
+  const working = results.find((r) => r.status === "fulfilled" && r.value.ok);
+  const workingUrl = working && working.status === "fulfilled" ? working.value.proxyUrl : null;
+
+  // Cache the result so the hot path avoids re-probing for 5 minutes
+  if (workingUrl) {
+    PROXY_FALLBACK_CACHE.set(targetHostname, {
+      proxyUrl: workingUrl,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+  }
+
   if (!workingUrl) return null;
 
   try {
@@ -377,7 +418,7 @@ export async function selectWorkingProxyFallback(
       },
       level: "autoSelect",
       levelId: null,
-      source: "automatic",
+      source: "automatic-us",
     };
   } catch {
     return null;

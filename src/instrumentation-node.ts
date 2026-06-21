@@ -300,5 +300,14 @@ export async function registerNodejs(): Promise<void> {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn("[STARTUP] models.dev sync failed to start (non-fatal):", msg);
     }
+
+    // Free proxy scheduler: automatically syncs, tests, and auto-promotes USA proxies
+    try {
+      const { startFreeProxyJob } = await import("@/lib/jobs/freeProxyJob");
+      startFreeProxyJob();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[STARTUP] Free proxy job failed to start (non-fatal):", msg);
+    }
   }
 }

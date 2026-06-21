@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   proxy_pool:
@@ -6,6 +6,14 @@ services:
     container_name: proxy_pool
     ports:
       - "5010:5010"
+    entrypoint:
+      [
+        "/sbin/tini",
+        "--",
+        "sh",
+        "-c",
+        "apk add --no-cache bash > /dev/null 2>&1 && exec bash proxy_pool.sh start --fg",
+      ]
     environment:
       - DB_CONN=redis://redis:6379/0
     volumes:

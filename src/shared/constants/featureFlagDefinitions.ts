@@ -121,13 +121,13 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
     key: "PROXY_AUTO_SELECT_ENABLED",
     label: "Proxy Auto-Selection Fallback",
     description:
-      "When no proxy is assigned to a connection, auto-select the first working proxy from the registry. Off by default — otherwise any single registry proxy becomes a global fallback for all traffic (#3332).",
+      "When no proxy is assigned to a connection, auto-select a live USA proxy from the free proxy pool. The freeProxyJob scheduler scrapes, tests, and promotes US proxies automatically — enabling this routes all unassigned connections through a working US IP. Disable with PROXY_AUTO_SELECT_ENABLED=false.",
     descriptionI18nKey: "settings.featureFlags.proxyAutoSelectEnabled",
     category: "network",
-    defaultValue: "false",
+    defaultValue: "true",
     type: "boolean",
     requiresRestart: false,
-    warningLevel: "caution",
+    warningLevel: "info",
   },
   {
     key: "MITM_DISABLE_TLS_VERIFY",

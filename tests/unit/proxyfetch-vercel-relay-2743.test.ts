@@ -35,7 +35,7 @@ globalThis.fetch = relaySink;
 // Dynamic import AFTER the stub so `originalFetch` (captured at module init) === relaySink.
 const proxyDispatcher = await import("../../open-sse/utils/proxyDispatcher.ts");
 const { buildVercelRelayHeaders } = proxyDispatcher;
-const proxyFetchMod = await import("../../open-sse/utils/proxyFetch.ts");
+const proxyFetchMod = (await import("../../open-sse/utils/proxyFetch.ts")) as any;
 const { proxyFetch, runWithProxyContext } = proxyFetchMod;
 
 test.after(() => {

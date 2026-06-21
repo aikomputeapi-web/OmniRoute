@@ -4,7 +4,7 @@
 
 set -e
 
-OMNIROUTE_URL="${OMNIROUTE_URL:-http://localhost:3000}"
+OMNIROUTE_URL="${OMNIROUTE_URL:-http://localhost:20128}"
 MIN_QUALITY="${MIN_QUALITY:-60}"
 MAX_PROXIES="${MAX_PROXIES:-100}"
 LOG_FILE="${LOG_FILE:-/var/log/omniroute-proxy-manager.log}"

@@ -252,9 +252,9 @@ export function proxyConfigToUrl(
   if (!config.host) return null;
   const type = String(config.type || "http").toLowerCase();
 
-  // Vercel Relay entries carry the relay URL in `host` — no dispatcher needed;
-  // callers should use buildVercelRelayHeaders() and fetch directly.
-  if (type === "vercel") {
+  // Vercel Relay and GCP Serverless entries carry the relay URL in `host` — no dispatcher needed;
+  // callers should use buildVercelRelayHeaders() or fetch directly.
+  if (type === "vercel" || type === "gcp") {
     return config.host ? `https://${config.host}` : null;
   }
 

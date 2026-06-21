@@ -19,7 +19,8 @@ export class IplocateProvider implements FreeProxyProvider {
   readonly name = "IPLocate";
 
   isEnabled(): boolean {
-    return process.env.FREE_PROXY_IPLOCATE_ENABLED === "true";
+    // Default ON — opt out with FREE_PROXY_IPLOCATE_ENABLED=false
+    return process.env.FREE_PROXY_IPLOCATE_ENABLED !== "false";
   }
 
   async sync(): Promise<FreeProxySyncResult> {
@@ -39,6 +40,8 @@ export class IplocateProvider implements FreeProxyProvider {
 
     const { upsertFreeProxy } = await import("../db/freeProxies");
     const baseUrl = process.env.FREE_PROXY_IPLOCATE_BASE_URL || BASE_URL;
+    // When FREE_PROXY_COUNTRY_FILTER is set (default: US), only store matching proxies.
+    const countryFilter = (process.env.FREE_PROXY_COUNTRY_FILTER ?? "US").toUpperCase() || null;
     const errors: string[] = [];
     let added = 0;
     let updated = 0;
@@ -68,12 +71,14 @@ export class IplocateProvider implements FreeProxyProvider {
             errors.push(`${proto}: skipped private/loopback host ${p.ip}`);
             continue;
           }
+          const resolvedCountry = p.country?.slice(0, 2).toUpperCase() || null;
+          if (countryFilter && resolvedCountry && resolvedCountry !== countryFilter) continue;
           const item: FreeProxyItem = {
             source: "iplocate",
             host: p.ip,
             port: Number(p.port),
             type: proto,
-            countryCode: p.country?.slice(0, 2).toUpperCase() || null,
+            countryCode: resolvedCountry,
             qualityScore: null,
             latencyMs: null,
             anonymity: null,

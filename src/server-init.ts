@@ -6,6 +6,7 @@ import { initAuditLog, cleanupExpiredLogs, logAuditEvent } from "./lib/complianc
 import { initConsoleInterceptor } from "./lib/consoleInterceptor";
 import { startBudgetResetJob } from "./lib/jobs/budgetResetJob";
 import { startReasoningCacheCleanupJob } from "./lib/jobs/reasoningCacheCleanupJob";
+import { startFreeProxyJob } from "./lib/jobs/freeProxyJob";
 import { getSettings } from "./lib/db/settings";
 import { applyRuntimeSettings } from "./lib/config/runtimeSettings";
 import { setSystemPromptConfig } from "@omniroute/open-sse/services/systemPrompt.ts";
@@ -106,6 +107,7 @@ async function startServer() {
     startBudgetResetJob();
     startReasoningCacheCleanupJob();
     startRuntimeConfigHotReload();
+    startFreeProxyJob();
     startupLog.info("Server started with cloud sync initialized");
 
     // Log server start event to audit log

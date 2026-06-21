@@ -227,10 +227,12 @@ export async function runWithProxyContext(
 
   // T14: Proxy Fast-Fail
   // Perform a short TCP reachability check before issuing upstream requests.
-  // Skip for vercel-relay type: proxyConfigToUrl returns "https://<host>" which is the
+  // Skip for vercel-relay and gcp-relay types: proxyConfigToUrl returns "https://<host>" which is the
   // relay endpoint itself, not a proxy — the actual routing is handled via relay headers.
   const isVercelRelay = (effectiveProxyConfig as { type?: string })?.type === "vercel";
-  if (resolvedProxyUrl && !isVercelRelay) {
+  const isGcpRelay = (effectiveProxyConfig as { type?: string })?.type === "gcp";
+  const isRelay = isVercelRelay || isGcpRelay;
+  if (resolvedProxyUrl && !isRelay) {
     const reachable = await isProxyReachable(resolvedProxyUrl);
     if (!reachable) {
       const proxyLabel = proxyUrlForLogs(resolvedProxyUrl);
@@ -254,7 +256,7 @@ export async function runWithProxyContext(
   // (set for HOSTNAME proxies by proxyConfigToUrl), verify the hostname actually has a
   // record in that family before egressing. Refuse early rather than silently fall back
   // to the other family. No-op for IP literals (their family is intrinsic).
-  if (resolvedProxyUrl && !isVercelRelay) {
+  if (resolvedProxyUrl && !isRelay) {
     try {
       const u = new URL(resolvedProxyUrl);
       const fam = u.searchParams.get("family");
@@ -458,6 +460,57 @@ async function patchedFetch(
       console.debug(`[ProxyFetch] Routing via Vercel relay: ${hostForLogs}`);
     }
     return await originalFetch(`https://${vc.host}`, {
+      ...options,
+      headers: mergedHeaders,
+      duplex: "half",
+    });
+  }
+
+  // GCP Serverless Relay: instead of routing through an HTTP proxy dispatcher, we fetch
+  // an identity token from the metadata server and forward the request to the GCP Cloud Function.
+  if (
+    contextProxy &&
+    typeof contextProxy === "object" &&
+    (contextProxy as { type?: string }).type === "gcp"
+  ) {
+    const gc = contextProxy as { host?: string };
+    const targetUrl = getTargetUrl(input);
+    const functionUrl = `https://${gc.host}`;
+
+    let token = "";
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const metadataUrl = `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(functionUrl)}`;
+      const tokenRes = await originalFetch(metadataUrl, {
+        headers: { "Metadata-Flavor": "Google" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (tokenRes.ok) {
+        token = (await tokenRes.text()).trim();
+      } else {
+        console.warn(`[ProxyFetch] GCP Metadata server returned status ${tokenRes.status}`);
+      }
+    } catch (metadataErr) {
+      console.warn(
+        `[ProxyFetch] Failed to fetch token from GCP Metadata server: ${metadataErr instanceof Error ? metadataErr.message : String(metadataErr)}`
+      );
+    }
+
+    const parsed = new URL(targetUrl);
+    const mergedHeaders = new Headers(options?.headers);
+    mergedHeaders.set("x-relay-target", `${parsed.protocol}//${parsed.host}`);
+    mergedHeaders.set("x-relay-path", parsed.pathname + parsed.search);
+    if (token) {
+      mergedHeaders.set("Authorization", `Bearer ${token}`);
+    }
+
+    const hostForLogs = proxyUrlForLogs(functionUrl);
+    if (process.env.OMNIROUTE_PROXY_FETCH_DEBUG === "true") {
+      console.debug(`[ProxyFetch] Routing via GCP relay: ${hostForLogs}`);
+    }
+    return await originalFetch(functionUrl, {
       ...options,
       headers: mergedHeaders,
       duplex: "half",

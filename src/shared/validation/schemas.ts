@@ -1248,7 +1248,7 @@ export const proxyConfigSchema = z
     type: z
       .preprocess(
         (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
-        z.enum(["http", "https", "socks5"])
+        z.enum(["http", "https", "socks5", "vercel", "gcp"])
       )
       .optional(),
     host: z.string().trim().min(1).optional(),
@@ -1335,7 +1335,7 @@ const proxyRegistryFieldsSchema = z
     type: z
       .preprocess(
         (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
-        z.enum(["http", "https", "socks5", "vercel"])
+        z.enum(["http", "https", "socks5", "vercel", "gcp"])
       )
       .optional()
       .default("http"),
