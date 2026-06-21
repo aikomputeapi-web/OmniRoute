@@ -502,6 +502,12 @@ async function patchedFetch(
     const mergedHeaders = new Headers(options?.headers);
     mergedHeaders.set("x-relay-target", `${parsed.protocol}//${parsed.host}`);
     mergedHeaders.set("x-relay-path", parsed.pathname + parsed.search);
+
+    const originalAuth = mergedHeaders.get("Authorization");
+    if (originalAuth) {
+      mergedHeaders.set("x-relay-auth", originalAuth);
+    }
+
     if (token) {
       mergedHeaders.set("Authorization", `Bearer ${token}`);
     }

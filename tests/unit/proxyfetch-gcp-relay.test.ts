@@ -45,7 +45,7 @@ test("proxyFetch routes a gcp-type context through the GCP function, fetching me
   const response = await runWithProxyContext(GCP_CTX, () =>
     proxyFetch("https://api.openai.com/v1/chat/completions?x=1", {
       method: "POST",
-      headers: { "x-custom-hdr": "hello" },
+      headers: { "x-custom-hdr": "hello", Authorization: "Bearer original-user-token" },
     })
   );
 
@@ -70,6 +70,7 @@ test("proxyFetch routes a gcp-type context through the GCP function, fetching me
   assert.equal(forwardCall.input, "https://us-central1-project.cloudfunctions.net/proxy-function");
   const sentHeaders = new Headers(forwardCall.init.headers);
   assert.equal(sentHeaders.get("Authorization"), "Bearer mock-gcp-jwt-token");
+  assert.equal(sentHeaders.get("x-relay-auth"), "Bearer original-user-token");
   assert.equal(sentHeaders.get("x-relay-target"), "https://api.openai.com");
   assert.equal(sentHeaders.get("x-relay-path"), "/v1/chat/completions?x=1");
   assert.equal(sentHeaders.get("x-custom-hdr"), "hello");
