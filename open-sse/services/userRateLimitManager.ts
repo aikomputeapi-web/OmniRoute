@@ -63,13 +63,17 @@ export function getModelMultipliers(modelName: string): { input: number; output:
 const BUILTIN_PLAN_LIMITS: Record<string, { planName: string; limits: PlanLimits }> = {
   free: {
     planName: "Free",
+    // Free tier: token-monthly cap only (mirrors one Pro 5h allowance as a monthly
+    // budget). Request day/month caps disabled (0 = unlimited); RPM=5 remains as the
+    // abuse limiter. 5h/week token windows disabled — calendar-month tokens is the
+    // sole quota gate. Used only as a fallback when the portal DB is unreachable.
     limits: {
       requestsPerMinute: 5,
-      requestsPerDay: 20,
-      requestsPerMonth: 50,
-      limit5hTokens: 150_000,
-      limitWeekTokens: 500_000,
-      limitMonthTokens: 1_500_000,
+      requestsPerDay: 0,
+      requestsPerMonth: 0,
+      limit5hTokens: 0,
+      limitWeekTokens: 0,
+      limitMonthTokens: 3_000_000,
     },
   },
   "pay-as-you-go": {
@@ -144,20 +148,21 @@ local dayWindowMs = tonumber(ARGV[4])
 local window5hMs = tonumber(ARGV[5])
 local windowWeekMs = tonumber(ARGV[6])
 local monthStartMs = tonumber(ARGV[7])
+local weekStartMs = tonumber(ARGV[8])
 
-local minuteLimit = tonumber(ARGV[8])
-local dayLimit = tonumber(ARGV[9])
-local monthLimit = tonumber(ARGV[10])
-local limit5hTokens = tonumber(ARGV[11])
-local limitWeekTokens = tonumber(ARGV[12])
-local limitMonthTokens = tonumber(ARGV[13])
-local estimatedTokens = tonumber(ARGV[14])
+local minuteLimit = tonumber(ARGV[9])
+local dayLimit = tonumber(ARGV[10])
+local monthLimit = tonumber(ARGV[11])
+local limit5hTokens = tonumber(ARGV[12])
+local limitWeekTokens = tonumber(ARGV[13])
+local limitMonthTokens = tonumber(ARGV[14])
+local estimatedTokens = tonumber(ARGV[15])
 
-local minuteTtl = tonumber(ARGV[15])
-local dayTtl = tonumber(ARGV[16])
-local ttl5h = tonumber(ARGV[17])
-local ttlWeek = tonumber(ARGV[18])
-local monthTtl = tonumber(ARGV[19])
+local minuteTtl = tonumber(ARGV[16])
+local dayTtl = tonumber(ARGV[17])
+local ttl5h = tonumber(ARGV[18])
+local ttlWeek = tonumber(ARGV[19])
+local monthTtl = tonumber(ARGV[20])
 
 -- 1. O(M) Hash Cleanup (using ZRANGEBYSCORE on monthKey before trimming)
 local expiredMembers = redis.call("ZRANGEBYSCORE", monthKey, "-inf", monthStartMs)
@@ -176,7 +181,9 @@ end
 redis.call("ZREMRANGEBYSCORE", minuteKey, "-inf", nowMs - minuteWindowMs)
 redis.call("ZREMRANGEBYSCORE", dayKey, "-inf", nowMs - dayWindowMs)
 redis.call("ZREMRANGEBYSCORE", key5h, "-inf", nowMs - window5hMs)
-redis.call("ZREMRANGEBYSCORE", weekKey, "-inf", nowMs - windowWeekMs)
+-- Week window is calendar-anchored (ISO Monday UTC): prune everything before the
+-- current week's start, not a rolling now-weekMs tail.
+redis.call("ZREMRANGEBYSCORE", weekKey, "-inf", weekStartMs)
 redis.call("ZREMRANGEBYSCORE", monthKey, "-inf", monthStartMs)
 
 -- 3. Check Minute request count limit
@@ -231,12 +238,10 @@ if limit5hTokens > 0 and (used5h + estimatedTokens) > limit5hTokens then
   return { "5h", retryAfter, minuteCount, used5h, 0, 0, dayCount }
 end
 
--- 7. Check Week token limit
+-- 7. Check Week token limit (calendar-anchored: resets at next Monday 00:00 UTC)
 local usedWeek = get_cumulative_cost(weekKey)
 if limitWeekTokens > 0 and (usedWeek + estimatedTokens) > limitWeekTokens then
-  local oldest = redis.call("ZRANGE", weekKey, 0, 0, "WITHSCORES")
-  local oldestMs = tonumber(oldest[2]) or nowMs
-  local retryAfter = math.max(1, math.ceil(((oldestMs + windowWeekMs) - nowMs) / 1000))
+  local retryAfter = math.max(1, math.ceil(((weekStartMs + windowWeekMs) - nowMs) / 1000))
   return { "week", retryAfter, minuteCount, used5h, usedWeek, 0, dayCount }
 end
 
@@ -286,12 +291,14 @@ local dayWindowMs = tonumber(ARGV[3])
 local window5hMs = tonumber(ARGV[4])
 local windowWeekMs = tonumber(ARGV[5])
 local monthStartMs = tonumber(ARGV[6])
+local weekStartMs = tonumber(ARGV[7])
 
 -- Trim ZSETs
 redis.call("ZREMRANGEBYSCORE", minuteKey, "-inf", nowMs - minuteWindowMs)
 redis.call("ZREMRANGEBYSCORE", dayKey, "-inf", nowMs - dayWindowMs)
 redis.call("ZREMRANGEBYSCORE", key5h, "-inf", nowMs - window5hMs)
-redis.call("ZREMRANGEBYSCORE", weekKey, "-inf", nowMs - windowWeekMs)
+-- Week window is calendar-anchored (ISO Monday UTC).
+redis.call("ZREMRANGEBYSCORE", weekKey, "-inf", weekStartMs)
 redis.call("ZREMRANGEBYSCORE", monthKey, "-inf", monthStartMs)
 
 local minuteCount = redis.call("ZCARD", minuteKey)
@@ -439,13 +446,13 @@ export class UserRateLimitManager {
 
     try {
       const client = await this.getRedisClient();
-      const { monthStartMs } = getUtcWindowStarts(nowMs);
+      const { monthStartMs, weekStartMs } = getUtcWindowStarts(nowMs);
       const result = (await client.eval(CHECK_AND_RESERVE_SCRIPT, {
         keys: [
           this.getMinuteKey(userId),
           this.getDayKey(userId),
           this.get5hKey(userId),
-          this.getWeekKey(userId),
+          this.getWeekKey(userId, nowMs),
           this.getMonthKey(userId, nowMs),
           this.getCostsKey(userId),
         ],
@@ -457,6 +464,7 @@ export class UserRateLimitManager {
           String(WINDOW_5H_MS),
           String(WINDOW_WEEK_MS),
           String(monthStartMs),
+          String(weekStartMs),
           String(plan.requestsPerMinute),
           String(plan.requestsPerDay),
           String(plan.requestsPerMonth),
@@ -579,13 +587,13 @@ export class UserRateLimitManager {
 
     try {
       const client = await this.getRedisClient();
-      const { monthStartMs } = getUtcWindowStarts(nowMs);
+      const { monthStartMs, weekStartMs } = getUtcWindowStarts(nowMs);
       const result = (await client.eval(SNAPSHOT_SCRIPT, {
         keys: [
           this.getMinuteKey(userId),
           this.getDayKey(userId),
           this.get5hKey(userId),
-          this.getWeekKey(userId),
+          this.getWeekKey(userId, nowMs),
           this.getMonthKey(userId, nowMs),
           this.getCostsKey(userId),
         ],
@@ -596,6 +604,7 @@ export class UserRateLimitManager {
           String(WINDOW_5H_MS),
           String(WINDOW_WEEK_MS),
           String(monthStartMs),
+          String(weekStartMs),
         ],
       })) as unknown[];
 
@@ -736,7 +745,8 @@ export class UserRateLimitManager {
       nowMs - (nowMs % MINUTE_WINDOW_MS) + MINUTE_WINDOW_MS
     ).toISOString();
     const reset5hAt = new Date(nowMs + WINDOW_5H_MS).toISOString();
-    const resetWeekAt = new Date(nowMs + WINDOW_WEEK_MS).toISOString();
+    // Week window is calendar-anchored (ISO Monday UTC): resets at next Monday 00:00 UTC.
+    const resetWeekAt = new Date(getNextUtcWeekStartMs(nowMs)).toISOString();
     const monthResetAt = new Date(getNextUtcMonthStart(nowMs)).toISOString();
 
     return {
@@ -783,7 +793,8 @@ export class UserRateLimitManager {
       return Math.max(1, Math.ceil(WINDOW_5H_MS / 1000));
     }
     if (blockedWindow === "week") {
-      return Math.max(1, Math.ceil(WINDOW_WEEK_MS / 1000));
+      // Calendar-anchored week (ISO Monday UTC): retry when the next week starts.
+      return Math.max(1, Math.ceil((getNextUtcWeekStartMs(nowMs) - nowMs) / 1000));
     }
     if (blockedWindow === "month") {
       return Math.max(1, Math.ceil((getNextUtcMonthStart(nowMs) - nowMs) / 1000));
@@ -799,8 +810,9 @@ export class UserRateLimitManager {
     return `user-quota:${userId}:5h`;
   }
 
-  private getWeekKey(userId: string): string {
-    return `user-quota:${userId}:week`;
+  private getWeekKey(userId: string, nowMs: number): string {
+    // Bucketed by ISO calendar week (Monday UTC) so counts don't bleed across weeks.
+    return `user-quota:${userId}:week:${formatUtcWeek(nowMs)}`;
   }
 
   private getCostsKey(userId: string): string {
@@ -844,17 +856,45 @@ function formatUtcMonth(ms: number): string {
   return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function getUtcWindowStarts(nowMs: number): { dayStartMs: number; monthStartMs: number } {
+function getUtcWindowStarts(nowMs: number): {
+  dayStartMs: number;
+  monthStartMs: number;
+  weekStartMs: number;
+} {
   const date = new Date(nowMs);
   return {
     dayStartMs: Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
     monthStartMs: Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1),
+    weekStartMs: getUtcWeekStartMs(nowMs),
   };
 }
 
 function getNextUtcMonthStart(nowMs: number): number {
   const date = new Date(nowMs);
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+}
+
+// ISO 8601 calendar week: starts Monday 00:00 UTC.
+// getUTCDay(): 0=Sun, 1=Mon, ..., 6=Sat. Shift so Monday is the anchor.
+function getUtcWeekStartMs(nowMs: number): number {
+  const date = new Date(nowMs);
+  const dayOfMonth = date.getUTCDate();
+  // days since Monday (0 = Monday)
+  const daysSinceMonday = (date.getUTCDay() + 6) % 7;
+  return Date.UTC(
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    dayOfMonth - daysSinceMonday
+  );
+}
+
+function getNextUtcWeekStartMs(nowMs: number): number {
+  return getUtcWeekStartMs(nowMs) + WINDOW_WEEK_MS;
+}
+
+function formatUtcWeek(nowMs: number): string {
+  const start = new Date(getUtcWeekStartMs(nowMs));
+  return `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}-${String(start.getUTCDate()).padStart(2, "0")}`;
 }
 
 function readBoolEnv(
