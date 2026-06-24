@@ -5748,7 +5748,17 @@
     "proxyGlobalConfigTab": "Глобальная Конфигурация",
     "proxyPoolTab": "Пул Прокси",
     "freePoolTab": "Бесплатный Пул",
-    "proxyDocumentationTab": "Документация"
+    "proxyOptionsTab": "Настройки",
+    "proxyDocumentationTab": "Документация",
+    "freeProxyOptionsTab": "Настройки бесплатного прокси",
+    "freeProxyCheckIntervalLabel": "Интервал проверки (минуты)",
+    "freeProxyCheckIntervalDesc": "Как часто проверять работоспособность прокси в пуле.",
+    "freeProxySyncIntervalLabel": "Интервал синхронизации (минуты)",
+    "freeProxySyncIntervalDesc": "Как часто синхронизировать новые бесплатные прокси от провайдеров и продвигать лучший в глобальный.",
+    "freeProxyCountryFilterLabel": "Фильтр стран",
+    "freeProxyCountryFilterDesc": "В бесплатный пул сохраняются только прокси, соответствующие этому коду (по умолчанию: US).",
+    "freeProxyMinQualityLabelSettings": "Минимальное качество прокси",
+    "freeProxyMinQualityDesc": "Минимальная оценка качества (0-100), необходимая для добавления бесплатного прокси в пул."
   },
   "contextRtk": {
     "title": "RTK Engine",

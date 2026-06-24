@@ -146,6 +146,14 @@ export async function getSettings() {
     customBannedSignals: [],
     proxyEnabled: true,
     perKeyProxyEnabled: false,
+    freeProxyAutoJobEnabled: process.env.FREE_PROXY_AUTO_JOB_ENABLED !== "false",
+    freeProxyCheckIntervalMin: 15,
+    freeProxySyncIntervalMin: 60,
+    freeProxyCountryFilter: process.env.FREE_PROXY_COUNTRY_FILTER || "US",
+    freeProxyMinQuality: 40,
+    freeProxyMinTests: 5,
+    freeProxyMinSuccessRate: 100,
+    freeProxyAutoElevate: true,
   };
   for (const row of rows) {
     const record = toRecord(row);

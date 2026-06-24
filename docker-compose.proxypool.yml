@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   proxy_pool:
     image: jhao104/proxy_pool:latest
@@ -15,20 +13,36 @@ services:
         "apk add --no-cache bash > /dev/null 2>&1 && exec bash proxy_pool.sh start --fg",
       ]
     environment:
-      - DB_CONN=redis://redis:6379/0
+      - DB_CONN=redis://proxypool-redis:6379/0
+    depends_on:
+      proxypool-redis:
+        condition: service_healthy
     volumes:
       - ./proxy_pool_config:/app/config
     networks:
-      - omniroute-network
+      - proxypool-network
     restart: unless-stopped
 
-  redis:
-    image: redis:alpine
+  proxypool-redis:
+    image: redis:7-alpine
     container_name: proxy_pool_redis
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - proxypool_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     networks:
-      - omniroute-network
+      - proxypool-network
     restart: unless-stopped
 
 networks:
-  omniroute-network:
+  proxypool-network:
+    name: omniroute_proxypool-network
     driver: bridge
+
+volumes:
+  proxypool_redis_data:
+    name: omniroute-proxypool-redis-data

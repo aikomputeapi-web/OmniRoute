@@ -33,6 +33,7 @@ x-common: &common
     - REDIS_URL=${REDIS_URL:-redis://redis:6379}
   volumes:
     - ./data:/app/data
+    - ./proxy_scraper_data:/app/proxy_scraper_data
   healthcheck:
     test: ["CMD", "node", "healthcheck.mjs"]
     interval: 30s
@@ -92,6 +93,7 @@ services:
   omniroute-cli:
     <<: *common
     container_name: omniroute
+    user: root
     build:
       context: .
       target: runner-cli

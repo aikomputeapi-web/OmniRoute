@@ -19,6 +19,8 @@ interface FreeProxyRowProps {
   onToggleSelect: (id: string) => void;
   onAddToPool: (id: string) => void;
   adding: boolean;
+  onDelete: (id: string) => void;
+  deleting: boolean;
 }
 
 export default function FreeProxyRow({
@@ -27,6 +29,8 @@ export default function FreeProxyRow({
   onToggleSelect,
   onAddToPool,
   adding,
+  onDelete,
+  deleting,
 }: FreeProxyRowProps) {
   const qualityColor =
     proxy.qualityScore == null
@@ -62,20 +66,32 @@ export default function FreeProxyRow({
         {proxy.latencyMs != null ? `${proxy.latencyMs}ms` : "—"}
       </td>
       <td className="px-3 py-2">
-        {proxy.inPool ? (
-          <span className="px-2 py-0.5 rounded text-xs bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-            in pool
-          </span>
-        ) : (
-          <button
-            onClick={() => onAddToPool(proxy.id)}
-            disabled={adding}
-            aria-label={`Add ${proxy.host}:${proxy.port} to pool`}
-            className="px-2 py-0.5 rounded text-xs bg-primary/15 text-primary border border-primary/30 hover:bg-primary/25 disabled:opacity-50"
-          >
-            {adding ? "..." : "⊕"}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {proxy.inPool ? (
+            <span className="px-2 py-0.5 rounded text-xs bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              in pool
+            </span>
+          ) : (
+            <>
+              <button
+                onClick={() => onAddToPool(proxy.id)}
+                disabled={adding || deleting}
+                aria-label={`Add ${proxy.host}:${proxy.port} to pool`}
+                className="px-2 py-0.5 rounded text-xs bg-primary/15 text-primary border border-primary/30 hover:bg-primary/25 disabled:opacity-50"
+              >
+                {adding ? "..." : "⊕"}
+              </button>
+              <button
+                onClick={() => onDelete(proxy.id)}
+                disabled={adding || deleting}
+                aria-label={`Delete ${proxy.host}:${proxy.port}`}
+                className="px-2 py-0.5 rounded text-xs bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25 disabled:opacity-50 flex items-center justify-center font-bold"
+              >
+                {deleting ? "..." : "✕"}
+              </button>
+            </>
+          )}
+        </div>
       </td>
     </tr>
   );

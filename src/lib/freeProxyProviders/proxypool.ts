@@ -75,7 +75,7 @@ export class ProxyPoolProvider implements FreeProxyProvider {
 
         const result = await upsertFreeProxy(item);
         if (result.action === "created") added++;
-        else updated++;
+        else if (result.action === "updated") updated++;
       }
 
       return { fetched: limitedProxies.length, added, updated, errors };

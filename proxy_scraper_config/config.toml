@@ -1,0 +1,89 @@
+#:schema ./config-schema.json
+
+# Enable debug logging to see detailed checking process for each proxy
+debug = false
+
+[output]
+# Output directory
+path = "./out"
+
+# Sort proxies by speed
+sort_by_speed = true
+
+# Plain text output (.txt files)
+[output.txt]
+enabled = true
+
+# JSON output with metadata (.json files)
+[output.json]
+enabled = true
+
+# Add ASN (network provider) info to JSON output
+include_asn = true
+
+# Add geolocation data to JSON output
+include_geolocation = true
+
+[checking]
+# URL for checking proxy functionality
+check_url = "https://httpbin.org/ip"
+
+# Number of proxies to check simultaneously
+max_concurrent_checks = 512
+
+# Proxy response timeout (seconds)
+timeout = 10.0
+connect_timeout = 5.0
+
+# User-Agent header for proxy check requests
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+
+[scraping]
+# Maximum proxies to collect per source
+max_proxies_per_source = 100000
+
+# Request timeout for fetching proxy sources
+timeout = 10.0
+connect_timeout = 5.0
+
+# Proxy used for fetching sources (empty to disable)
+proxy = ""
+
+# User-Agent header for scraping requests
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+
+# Proxy sources configuration
+[scraping.http]
+enabled = true
+urls = [
+  "https://api.proxyscrape.com/v3/free-proxy-list/get?request=getproxies&protocol=http",
+  "https://api.proxyscrape.com/v3/free-proxy-list/get?request=getproxies&protocol=https",
+  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/http.txt",
+  "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/http/data.txt",
+  "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/https/data.txt",
+  "https://raw.githubusercontent.com/roosterkid/openproxylist/refs/heads/main/HTTPS_RAW.txt",
+  "https://raw.githubusercontent.com/sunny9577/proxy-scraper/refs/heads/master/generated/http_proxies.txt",
+]
+
+[scraping.socks4]
+enabled = true
+urls = [
+  "https://api.proxyscrape.com/v3/free-proxy-list/get?request=getproxies&protocol=socks4",
+  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks4.txt",
+  "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/socks4/data.txt",
+  "https://raw.githubusercontent.com/roosterkid/openproxylist/refs/heads/main/SOCKS4_RAW.txt",
+  "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/refs/heads/master/socks4.txt",
+  "https://raw.githubusercontent.com/mmpx12/proxy-list/refs/heads/master/socks4.txt",
+]
+
+[scraping.socks5]
+enabled = true
+urls = [
+  "https://api.proxyscrape.com/v3/free-proxy-list/get?request=getproxies&protocol=socks5",
+  "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/refs/heads/master/socks5.txt",
+  "https://raw.githubusercontent.com/hookzof/socks5_list/refs/heads/master/proxy.txt",
+  "https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/protocols/socks5/data.txt",
+  "https://raw.githubusercontent.com/roosterkid/openproxylist/refs/heads/main/SOCKS5_RAW.txt",
+  "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/refs/heads/master/socks5.txt",
+  "https://raw.githubusercontent.com/mmpx12/proxy-list/refs/heads/master/socks5.txt",
+]

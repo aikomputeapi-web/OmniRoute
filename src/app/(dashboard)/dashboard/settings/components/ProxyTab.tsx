@@ -5,14 +5,16 @@ import { useTranslations } from "next-intl";
 import GlobalConfigTab from "./proxy/GlobalConfigTab";
 import ProxyPoolTab from "./proxy/ProxyPoolTab";
 import FreePoolTab from "./proxy/FreePoolTab";
+import OptionsTab from "./proxy/OptionsTab";
 import DocumentationTab from "./proxy/DocumentationTab";
 
-type TabId = "global-config" | "proxy-pool" | "free-pool" | "documentation";
+type TabId = "global-config" | "proxy-pool" | "free-pool" | "options" | "documentation";
 
 const TABS: Array<{ id: TabId; labelKey: string }> = [
   { id: "global-config", labelKey: "proxyGlobalConfigTab" },
   { id: "proxy-pool", labelKey: "proxyPoolTab" },
   { id: "free-pool", labelKey: "freePoolTab" },
+  { id: "options", labelKey: "proxyOptionsTab" },
   { id: "documentation", labelKey: "proxyDocumentationTab" },
 ];
 
@@ -61,6 +63,7 @@ export default function ProxyTab() {
         {activeTab === "global-config" && <GlobalConfigTab />}
         {activeTab === "proxy-pool" && <ProxyPoolTab />}
         {activeTab === "free-pool" && <FreePoolTab />}
+        {activeTab === "options" && <OptionsTab />}
         {activeTab === "documentation" && <DocumentationTab />}
       </div>
     </div>

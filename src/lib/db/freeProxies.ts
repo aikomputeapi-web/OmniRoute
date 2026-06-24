@@ -16,6 +16,8 @@ export interface FreeProxyRecord {
   lastValidated: string | null;
   inPool: boolean;
   poolProxyId: string | null;
+  testCount: number;
+  successCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +47,8 @@ function mapRow(row: unknown): FreeProxyRecord {
     lastValidated: r.last_validated != null ? String(r.last_validated) : null,
     inPool: r.in_pool === 1 || r.in_pool === true,
     poolProxyId: r.pool_proxy_id != null ? String(r.pool_proxy_id) : null,
+    testCount: Number(r.test_count ?? 0),
+    successCount: Number(r.success_count ?? 0),
     createdAt: String(r.created_at ?? ""),
     updatedAt: String(r.updated_at ?? ""),
   };
@@ -52,9 +56,29 @@ function mapRow(row: unknown): FreeProxyRecord {
 
 export async function upsertFreeProxy(
   item: FreeProxyItem
-): Promise<{ id: string; action: "created" | "updated" }> {
+): Promise<{ id: string; action: "created" | "updated" | "skipped" }> {
   const db = getDbInstance();
   const now = new Date().toISOString();
+
+  try {
+    const { getSettings } = await import("./settings");
+    const settings = await getSettings();
+    const countryFilter = String(
+      settings.freeProxyCountryFilter || process.env.FREE_PROXY_COUNTRY_FILTER || "US"
+    ).toUpperCase();
+    if (
+      countryFilter !== "ALL" &&
+      item.countryCode &&
+      item.countryCode.toUpperCase() !== countryFilter
+    ) {
+      return { id: "", action: "skipped" };
+    }
+  } catch (err) {
+    console.warn(
+      "[FreeProxies] Failed to retrieve country filter settings in upsertFreeProxy:",
+      err
+    );
+  }
 
   const existing = db
     .prepare("SELECT id FROM free_proxies WHERE source = ? AND host = ? AND port = ?")
@@ -83,8 +107,8 @@ export async function upsertFreeProxy(
   db.prepare(
     `INSERT INTO free_proxies
      (id, source, host, port, type, country_code, quality_score, latency_ms,
-      anonymity, last_validated, in_pool, pool_proxy_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`
+      anonymity, last_validated, in_pool, pool_proxy_id, test_count, success_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, 0, 0, ?, ?)`
   ).run(
     id,
     item.source,
@@ -195,6 +219,27 @@ export async function markFreeProxyInPool(id: string, poolProxyId: string): Prom
   db.prepare(
     "UPDATE free_proxies SET in_pool = 1, pool_proxy_id = ?, updated_at = ? WHERE id = ?"
   ).run(poolProxyId, now, id);
+  backupDbFile("pre-write");
+}
+
+export async function incrementFreeProxyStats(
+  id: string,
+  success: boolean,
+  latencyMs: number | null,
+  qualityScore: number | null
+): Promise<void> {
+  const db = getDbInstance();
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE free_proxies
+     SET test_count = test_count + 1,
+         success_count = success_count + (CASE WHEN ? = 1 THEN 1 ELSE 0 END),
+         latency_ms = ?,
+         quality_score = ?,
+         last_validated = ?,
+         updated_at = ?
+     WHERE id = ?`
+  ).run(success ? 1 : 0, latencyMs, qualityScore, now, now, id);
   backupDbFile("pre-write");
 }
 

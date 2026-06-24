@@ -154,6 +154,7 @@ export default function ProxyRegistryManager() {
   const [items, setItems] = useState<ProxyItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testingAll, setTestingAll] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -345,6 +346,46 @@ export default function ProxyRegistryManager() {
       setTestById((prev) => ({ ...prev, [item.id]: { success: false, error: e?.message } }));
     } finally {
       setTestingId(null);
+    }
+  };
+
+  const handleTestAll = async () => {
+    if (testingAll) return;
+    setTestingAll(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/settings/proxies/egress", {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.error?.message || "Failed to validate proxy pool");
+        return;
+      }
+      const report = Array.isArray(data?.report) ? data.report : [];
+      const newTests = { ...testById };
+      for (const entry of report) {
+        if (entry.proxyId) {
+          if (entry.alive) {
+            newTests[entry.proxyId] = {
+              success: true,
+              publicIp: entry.egressIp || "Unknown",
+              latencyMs: entry.latencyMs,
+            };
+          } else {
+            newTests[entry.proxyId] = {
+              success: false,
+              error: t("failed") || "Offline",
+            };
+          }
+        }
+      }
+      setTestById(newTests);
+      void loadHealth();
+    } catch (e: any) {
+      setError(e?.message || "Failed to validate proxy pool");
+    } finally {
+      setTestingAll(false);
     }
   };
 
@@ -603,6 +644,17 @@ export default function ProxyRegistryManager() {
               data-testid="proxy-registry-open-bulk"
             >
               {t("bulkAssign")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="network_check"
+              onClick={handleTestAll}
+              loading={testingAll}
+              disabled={testingAll || testingId !== null}
+              data-testid="proxy-registry-test-all"
+            >
+              {testingAll ? "Testing..." : "Test All"}
             </Button>
             <Button
               size="sm"

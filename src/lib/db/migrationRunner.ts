@@ -548,6 +548,12 @@ function isSchemaAlreadyApplied(
       // daily_usage_summary_api_keys migration (renumbered 077 → 095 → 096 to avoid
       // collision with 077_api_key_stream_default_mode and 095_provider_node_custom_headers).
       return hasColumn(db, "daily_usage_summary", "api_key_id");
+    case "101":
+      // free_proxies_stats migration (adding test_count and success_count columns)
+      return (
+        hasColumn(db, "free_proxies", "test_count") &&
+        hasColumn(db, "free_proxies", "success_count")
+      );
     default:
       return false;
   }

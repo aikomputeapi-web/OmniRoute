@@ -1,8 +1,14 @@
 "use client";
 
-export type SourceId = "1proxy" | "proxifly" | "iplocate";
+export type SourceId = "1proxy" | "proxifly" | "iplocate" | "proxypool" | "proxyscraper";
 
-export const ALL_SOURCE_IDS: SourceId[] = ["1proxy", "proxifly", "iplocate"];
+export const ALL_SOURCE_IDS: SourceId[] = [
+  "1proxy",
+  "proxifly",
+  "iplocate",
+  "proxypool",
+  "proxyscraper",
+];
 
 export const FREE_POOL_DISABLED_SOURCES_KEY = "freePool.disabledSources";
 
@@ -32,6 +38,8 @@ const SOURCES: Array<{ id: SourceId; label: string }> = [
   { id: "1proxy", label: "1proxy" },
   { id: "proxifly", label: "Proxifly" },
   { id: "iplocate", label: "IPLocate" },
+  { id: "proxypool", label: "ProxyPool" },
+  { id: "proxyscraper", label: "ProxyScraper" },
 ];
 
 export default function SourceToggleBar({ disabledSources, onToggle }: SourceToggleBarProps) {

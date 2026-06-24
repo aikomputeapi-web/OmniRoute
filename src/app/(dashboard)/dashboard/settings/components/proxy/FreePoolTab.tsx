@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/shared/components";
 import SourceToggleBar, {
@@ -29,7 +29,49 @@ export default function FreePoolTab() {
   const [syncing, setSyncing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
+  const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [bulkProgress, setBulkProgress] = useState<string | null>(null);
+  const [runningScraper, setRunningScraper] = useState(false);
+  const [testingAll, setTestingAll] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
+  const [logs, setLogs] = useState<string>("");
+  const [fetchingLogs, setFetchingLogs] = useState(false);
+  const logPreRef = useRef<HTMLPreElement>(null);
+
+  const fetchLogs = useCallback(async () => {
+    setFetchingLogs(true);
+    try {
+      const res = await fetch("/api/settings/free-proxies/scraper/logs");
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data.logs || "");
+      }
+    } catch {}
+    setFetchingLogs(false);
+  }, []);
+
+  // Auto-scroll the log console to the bottom whenever new content arrives
+  useEffect(() => {
+    if (logPreRef.current) {
+      logPreRef.current.scrollTop = logPreRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+    if (showLogs || runningScraper) {
+      // Defer the initial fetch to a microtask so the setState inside
+      // fetchLogs isn't called synchronously within this effect body
+      // (avoids cascading renders flagged by react-hooks/set-state-in-effect).
+      Promise.resolve().then(() => void fetchLogs());
+      intervalId = setInterval(() => {
+        void fetchLogs();
+      }, 3000);
+    }
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [showLogs, runningScraper, fetchLogs]);
 
   // Load persisted disabled-sources from localStorage on mount
   useEffect(() => {
@@ -58,7 +100,7 @@ export default function FreePoolTab() {
       if (filterProtocol) params.set("protocol", filterProtocol);
       if (filterCountry) params.set("country", filterCountry);
       if (minQuality) params.set("minQuality", minQuality);
-      params.set("limit", "200");
+      params.set("limit", "1000");
 
       const [proxiesRes, statsRes] = await Promise.all([
         fetch(`/api/settings/free-proxies?${params.toString()}`),
@@ -96,6 +138,45 @@ export default function FreePoolTab() {
     setSyncing(false);
   };
 
+  const handleRunScraper = async () => {
+    setRunningScraper(true);
+    setShowLogs(true); // auto-open console so user can watch the scrape
+    try {
+      const res = await fetch("/api/settings/free-proxies/scraper/start", {
+        method: "POST",
+      });
+      if (!res.ok) {
+        console.error("[Scraper] start failed:", res.status, await res.text());
+        setRunningScraper(false);
+        return;
+      }
+    } catch (err) {
+      console.error("[Scraper] start error:", err);
+      setRunningScraper(false);
+      return;
+    }
+    // Keep runningScraper=true for up to 3 minutes so the log console keeps
+    // polling throughout the full scrape. Reload proxy list when done.
+    setTimeout(
+      () => {
+        setRunningScraper(false);
+        void loadData();
+      },
+      3 * 60 * 1000
+    );
+  };
+
+  const handleTestAll = async () => {
+    setTestingAll(true);
+    try {
+      await fetch("/api/settings/free-proxies/test-all", {
+        method: "POST",
+      });
+      setTimeout(() => loadData(), 2000);
+    } catch {}
+    setTestingAll(false);
+  };
+
   const handleAddToPool = async (id: string) => {
     setAddingIds((prev) => new Set(prev).add(id));
     try {
@@ -107,6 +188,28 @@ export default function FreePoolTab() {
       }
     } catch {}
     setAddingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const handleDelete = async (id: string) => {
+    setDeletingIds((prev) => new Set(prev).add(id));
+    try {
+      const res = await fetch(`/api/settings/free-proxies?id=${id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setProxies((prev) => prev.filter((p) => p.id !== id));
+        setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    } catch {}
+    setDeletingIds((prev) => {
       const next = new Set(prev);
       next.delete(id);
       return next;
@@ -177,6 +280,33 @@ export default function FreePoolTab() {
             className="text-xs bg-surface-alt border border-border rounded px-2 py-1 w-24"
             aria-label={t("proxyFreePoolMinQualityLabel")}
           />
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="play_arrow"
+            onClick={handleRunScraper}
+            disabled={runningScraper}
+          >
+            {runningScraper ? "Scraping..." : "Scrape Proxies"}
+          </Button>
+          <Button
+            size="sm"
+            variant={showLogs ? "primary" : "secondary"}
+            icon="terminal"
+            onClick={() => setShowLogs((prev) => !prev)}
+            data-testid="free-pool-toggle-logs"
+          >
+            {showLogs ? "Hide Console" : "Scraper Console"}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="network_check"
+            onClick={handleTestAll}
+            disabled={testingAll}
+          >
+            {testingAll ? "Testing..." : "Test All"}
+          </Button>
           <Button size="sm" variant="secondary" icon="sync" onClick={handleSync} disabled={syncing}>
             {syncing ? t("syncing") : t("proxyFreePoolSyncAll")}
           </Button>
@@ -185,12 +315,57 @@ export default function FreePoolTab() {
 
       {stats && (
         <div className="text-xs text-text-muted flex gap-4 flex-wrap">
-          <span>{t("proxyFreePoolTotal")}: {stats.total}</span>
-          <span>{t("proxyFreePoolInPool")}: {stats.inPool}</span>
-          {stats.avgQuality != null && <span>{t("proxyFreePoolAvgQuality")}: {stats.avgQuality}</span>}
-          {stats.lastSyncAt && (
-            <span>{t("lastSync")}: {new Date(stats.lastSyncAt).toLocaleTimeString()}</span>
+          <span>
+            {t("proxyFreePoolTotal")}: {stats.total}
+          </span>
+          <span>
+            {t("proxyFreePoolInPool")}: {stats.inPool}
+          </span>
+          {stats.avgQuality != null && (
+            <span>
+              {t("proxyFreePoolAvgQuality")}: {stats.avgQuality}
+            </span>
           )}
+          {stats.lastSyncAt && (
+            <span>
+              {t("lastSync")}: {new Date(stats.lastSyncAt).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      )}
+
+      {showLogs && (
+        <div className="flex flex-col gap-2 p-4 bg-black/90 dark:bg-black/95 rounded-lg border border-border/80 shadow-2xl relative">
+          <div className="flex items-center justify-between border-b border-white/10 pb-2">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
+                Proxy Scraper Console Logs
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              {fetchingLogs && (
+                <span className="text-[10px] font-mono text-zinc-400">Updating...</span>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setLogs("");
+                  void fetchLogs();
+                }}
+                className="text-xs font-mono text-zinc-400 hover:text-white transition-colors"
+                aria-label="Refresh Scraper Console Logs"
+              >
+                Clear/Refresh
+              </button>
+            </div>
+          </div>
+          <pre
+            ref={logPreRef}
+            className="font-mono text-xs overflow-auto bg-black text-emerald-400 p-3 h-64 shadow-inner whitespace-pre-wrap select-text scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent"
+          >
+            {logs || "No log activity recorded yet. Run a scrape to begin."}
+          </pre>
         </div>
       )}
 
@@ -264,6 +439,8 @@ export default function FreePoolTab() {
                   onToggleSelect={handleToggleSelect}
                   onAddToPool={handleAddToPool}
                   adding={addingIds.has(p.id)}
+                  onDelete={handleDelete}
+                  deleting={deletingIds.has(p.id)}
                 />
               ))
             )}

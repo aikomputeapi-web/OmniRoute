@@ -56,20 +56,40 @@ export class ProxyScraperProvider implements FreeProxyProvider {
     return process.env.FREE_PROXY_SCRAPER_ENABLED !== "false";
   }
 
-  private getConfig() {
-    const countryFilter = (
-      process.env.FREE_PROXY_COUNTRY_FILTER ?? DEFAULT_COUNTRY_FILTER
-    ).toUpperCase();
-    const countrySubdir = `./proxy_scraper_data/out/proxies/${countryFilter}`;
+  private async getConfig() {
+    let countryFilter = "";
+    try {
+      const { getSettings } = await import("../db/settings");
+      const settings = await getSettings();
+      countryFilter = (settings.freeProxyCountryFilter as string) || "";
+    } catch {}
+
+    if (!countryFilter) {
+      countryFilter = (
+        process.env.FREE_PROXY_COUNTRY_FILTER ?? DEFAULT_COUNTRY_FILTER
+      ).toUpperCase();
+    } else {
+      countryFilter = countryFilter.toUpperCase();
+    }
+
+    const baseOutDir = "./proxy_scraper_data/out";
+    const countrySubdir = `${baseOutDir}/proxies/${countryFilter}`;
+    const useCountrySubdir = countryFilter !== "ALL" && existsSync(`${countrySubdir}/http.txt`);
     return {
       // Primary: JSON file with geolocation data
-      jsonFile: process.env.FREE_PROXY_SCRAPER_JSON_FILE || "./proxy_scraper_data/out/proxies.json",
+      jsonFile: process.env.FREE_PROXY_SCRAPER_JSON_FILE || `${baseOutDir}/proxies.json`,
       // Fallback: flat text files
-      httpFile: process.env.FREE_PROXY_SCRAPER_HTTP_FILE || `${countrySubdir}/http.txt`,
-      socks4File: process.env.FREE_PROXY_SCRAPER_SOCKS4_FILE || `${countrySubdir}/socks4.txt`,
-      socks5File: process.env.FREE_PROXY_SCRAPER_SOCKS5_FILE || `${countrySubdir}/socks5.txt`,
+      httpFile:
+        process.env.FREE_PROXY_SCRAPER_HTTP_FILE ||
+        (useCountrySubdir ? `${countrySubdir}/http.txt` : `${baseOutDir}/http.txt`),
+      socks4File:
+        process.env.FREE_PROXY_SCRAPER_SOCKS4_FILE ||
+        (useCountrySubdir ? `${countrySubdir}/socks4.txt` : `${baseOutDir}/socks4.txt`),
+      socks5File:
+        process.env.FREE_PROXY_SCRAPER_SOCKS5_FILE ||
+        (useCountrySubdir ? `${countrySubdir}/socks5.txt` : `${baseOutDir}/socks5.txt`),
       maxProxies: parseInt(process.env.FREE_PROXY_SCRAPER_MAX || "", 10) || DEFAULT_MAX,
-      countryCode: countryFilter || null,
+      countryCode: countryFilter === "ALL" ? null : countryFilter || null,
     };
   }
 
@@ -106,7 +126,7 @@ export class ProxyScraperProvider implements FreeProxyProvider {
 
   private async syncFromJson(
     jsonPath: string,
-    config: ReturnType<typeof this.getConfig>
+    config: Awaited<ReturnType<typeof this.getConfig>>
   ): Promise<FreeProxySyncResult> {
     const { upsertFreeProxy } = await import("../db/freeProxies");
     const errors: string[] = [];
@@ -166,7 +186,7 @@ export class ProxyScraperProvider implements FreeProxyProvider {
 
       const result = await upsertFreeProxy(item);
       if (result.action === "created") added++;
-      else updated++;
+      else if (result.action === "updated") updated++;
     }
 
     if (filtered > 0) {
@@ -183,7 +203,7 @@ export class ProxyScraperProvider implements FreeProxyProvider {
   // ---------------------------------------------------------------------------
 
   private async syncFromTxtFiles(
-    config: ReturnType<typeof this.getConfig>
+    config: Awaited<ReturnType<typeof this.getConfig>>
   ): Promise<FreeProxySyncResult> {
     const { upsertFreeProxy } = await import("../db/freeProxies");
     const errors: string[] = [];
@@ -237,7 +257,7 @@ export class ProxyScraperProvider implements FreeProxyProvider {
 
           const result = await upsertFreeProxy(item);
           if (result.action === "created") added++;
-          else updated++;
+          else if (result.action === "updated") updated++;
         }
       } catch (err) {
         errors.push(`${type}: ${err instanceof Error ? err.message : String(err)}`);
@@ -256,7 +276,7 @@ export class ProxyScraperProvider implements FreeProxyProvider {
       return { fetched: 0, added: 0, updated: 0, errors: ["ProxyScraper provider disabled"] };
     }
 
-    const config = this.getConfig();
+    const config = await this.getConfig();
 
     // Primary: try JSON file with geolocation data
     if (existsSync(config.jsonFile)) {

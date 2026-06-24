@@ -13,7 +13,60 @@ import {
 import tlsClient from "./tlsClient.ts";
 import { isProxyReachable } from "@/lib/proxyHealth";
 import { isFeatureFlagEnabled } from "@/shared/utils/featureFlags";
-import { findWorkingProxy } from "./proxyFallback.ts";
+import { findWorkingProxy, getProxyCandidates } from "./proxyFallback.ts";
+
+export const testHooks = {
+  getProxyCandidates: null as (() => Promise<string[]>) | null,
+};
+
+async function findFirstReachableProxy(
+  candidates: string[],
+  timeoutMs = 2000
+): Promise<string | null> {
+  if (candidates.length === 0) return null;
+  return new Promise<string | null>((resolve) => {
+    let resolved = false;
+    let pendingCount = candidates.length;
+
+    candidates.forEach((proxyUrl) => {
+      isProxyReachable(proxyUrl, timeoutMs)
+        .then((reachable) => {
+          if (resolved) return;
+          if (reachable) {
+            resolved = true;
+            resolve(proxyUrl);
+          } else {
+            pendingCount--;
+            if (pendingCount === 0) {
+              resolve(null);
+            }
+          }
+        })
+        .catch(() => {
+          if (resolved) return;
+          pendingCount--;
+          if (pendingCount === 0) {
+            resolve(null);
+          }
+        });
+    });
+  });
+}
+
+function parseProxyUrlToConfig(proxyUrl: string) {
+  try {
+    const url = new URL(proxyUrl);
+    const type = url.protocol.replace(":", "") || "http";
+    const host = url.hostname;
+    const port = parseInt(url.port, 10) || (url.protocol === "https:" ? 443 : 80);
+    const username = url.username ? decodeURIComponent(url.username) : "";
+    const password = url.password ? decodeURIComponent(url.password) : "";
+    const family = url.searchParams.get("family") || "auto";
+    return { type, host, port, username, password, family };
+  } catch {
+    return null;
+  }
+}
 
 function isTlsFingerprintEnabled() {
   return process.env.ENABLE_TLS_FINGERPRINT === "true";
@@ -225,6 +278,9 @@ export async function runWithProxyContext(
   // Run fn with the proxy context cleared so the request egresses directly.
   const runDirect = () => proxyContext.run(null, fn);
 
+  let finalProxyConfig = effectiveProxyConfig;
+  let finalResolvedProxyUrl = resolvedProxyUrl;
+
   // T14: Proxy Fast-Fail
   // Perform a short TCP reachability check before issuing upstream requests.
   // Skip for vercel-relay and gcp-relay types: proxyConfigToUrl returns "https://<host>" which is the
@@ -236,19 +292,53 @@ export async function runWithProxyContext(
     const reachable = await isProxyReachable(resolvedProxyUrl);
     if (!reachable) {
       const proxyLabel = proxyUrlForLogs(resolvedProxyUrl);
-      if (directFallbackOnUnreachable) {
-        console.warn(
-          `[ProxyFetch] Proxy unreachable (${proxyLabel}); using a direct connection for this request.`
-        );
-        return runDirect();
+      console.warn(`[ProxyFetch] Proxy unreachable (${proxyLabel}). Finding backup proxies...`);
+
+      let backupFound = false;
+      try {
+        const getCandidatesFn = testHooks.getProxyCandidates || getProxyCandidates;
+        const allCandidates = await getCandidatesFn();
+        const failedUrlNormalized = resolvedProxyUrl.toLowerCase();
+        const candidates = allCandidates.filter((c) => c.toLowerCase() !== failedUrlNormalized);
+
+        if (candidates.length > 0) {
+          const candidatesToTest = candidates.slice(0, 3);
+          console.log(
+            `[ProxyFetch] Probing ${candidatesToTest.length} backup candidate(s) in parallel:`,
+            candidatesToTest.map((c) => proxyUrlForLogs(c))
+          );
+          const fastestBackupUrl = await findFirstReachableProxy(candidatesToTest);
+          if (fastestBackupUrl) {
+            const backupConfig = parseProxyUrlToConfig(fastestBackupUrl);
+            if (backupConfig) {
+              finalProxyConfig = backupConfig;
+              finalResolvedProxyUrl = fastestBackupUrl;
+              backupFound = true;
+              console.log(
+                `[ProxyFetch] Successfully swapped dead proxy with working backup: ${proxyUrlForLogs(fastestBackupUrl)}`
+              );
+            }
+          }
+        }
+      } catch (backupErr) {
+        console.error("[ProxyFetch] Error while resolving backup proxies:", backupErr);
       }
-      const err = new Error(`[Proxy Fast-Fail] Proxy unreachable: ${proxyLabel}`) as Error & {
-        code?: string;
-        statusCode?: number;
-      };
-      err.code = "PROXY_UNREACHABLE";
-      err.statusCode = 503;
-      throw err;
+
+      if (!backupFound) {
+        if (directFallbackOnUnreachable) {
+          console.warn(
+            `[ProxyFetch] Proxy unreachable (${proxyLabel}) and no working backup found; using a direct connection for this request.`
+          );
+          return runDirect();
+        }
+        const err = new Error(`[Proxy Fast-Fail] Proxy unreachable: ${proxyLabel}`) as Error & {
+          code?: string;
+          statusCode?: number;
+        };
+        err.code = "PROXY_UNREACHABLE";
+        err.statusCode = 503;
+        throw err;
+      }
     }
   }
 
@@ -256,9 +346,9 @@ export async function runWithProxyContext(
   // (set for HOSTNAME proxies by proxyConfigToUrl), verify the hostname actually has a
   // record in that family before egressing. Refuse early rather than silently fall back
   // to the other family. No-op for IP literals (their family is intrinsic).
-  if (resolvedProxyUrl && !isRelay) {
+  if (finalResolvedProxyUrl && !isRelay) {
     try {
-      const u = new URL(resolvedProxyUrl);
+      const u = new URL(finalResolvedProxyUrl);
       const fam = u.searchParams.get("family");
       if (fam === "ipv6" || fam === "ipv4") {
         const { assertHostnameSupportsFamily } = await import("./proxyFamilyResolve.ts");
@@ -267,7 +357,7 @@ export async function runWithProxyContext(
     } catch (familyErr) {
       if (directFallbackOnUnreachable) {
         console.warn(
-          `[ProxyFetch] Proxy family pre-check failed (${proxyUrlForLogs(resolvedProxyUrl)}); using a direct connection for this request.`
+          `[ProxyFetch] Proxy family pre-check failed (${proxyUrlForLogs(finalResolvedProxyUrl)}); using a direct connection for this request.`
         );
         return runDirect();
       }
@@ -278,10 +368,10 @@ export async function runWithProxyContext(
     }
   }
 
-  return proxyContext.run(effectiveProxyConfig, async () => {
-    if (resolvedProxyUrl && effectiveProxyConfig !== currentContext) {
+  return proxyContext.run(finalProxyConfig, async () => {
+    if (finalResolvedProxyUrl && finalProxyConfig !== currentContext) {
       console.log(
-        `[ProxyFetch] Applied request proxy context: ${proxyUrlForLogs(resolvedProxyUrl)}`
+        `[ProxyFetch] Applied request proxy context: ${proxyUrlForLogs(finalResolvedProxyUrl)}`
       );
     }
     return fn();

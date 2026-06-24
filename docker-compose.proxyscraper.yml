@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: omniroute-proxy-scraper
     restart: unless-stopped
+    env_file: .env
     init: true
     tty: false
     stdin_open: false
@@ -22,7 +23,11 @@ services:
           ln -sf /app/config/config.toml /home/app/config.toml
         fi
         mkdir -p /app/data/out
+        # All output goes to log file on shared volume (tailed by OmniRoute UI)
+        exec > >(tee -a /app/data/scraper.log) 2>&1
         while true; do
+          # Clear any stale trigger file before starting a scrape
+          rm -f /app/data/trigger_scrape
           echo "[$(date)] Starting proxy scrape and validation..."
           /app/proxy-scraper-checker --config /home/app/config.toml || true
           # Copy output files to mounted volume
@@ -34,11 +39,21 @@ services:
           cp -f /home/app/out/proxies_pretty.json /app/data/out/ 2>/dev/null || true
           # Auto-sync proxies to OmniRoute
           echo "[$(date)] Syncing proxies to OmniRoute..."
-          curl -s -X POST http://host.docker.internal:3000/api/settings/free-proxies/sync \
+          curl -s -X POST http://host.docker.internal:20128/api/settings/free-proxies/sync \
             -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $$OMNIROUTE_API_KEY" \
             -d '{"sources": ["proxyscraper"]}' || true
-          echo "[$(date)] Scrape complete. Sleeping for 1 hour..."
-          sleep 3600
+          echo "[$(date)] Scrape complete. Waiting up to 1 hour (or until manual trigger)..."
+          # Poll every 10 s for a trigger file instead of a solid sleep 3600.
+          # Uses a deadline timestamp to avoid variable-scope issues with tee subshells.
+          DEADLINE=$(( $(date +%s) + 3600 ))
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            if [ -f /app/data/trigger_scrape ]; then
+              echo "[$(date)] Manual trigger detected — starting fresh scrape immediately."
+              break
+            fi
+            sleep 10
+          done
         done
     networks:
       - omniroute-network

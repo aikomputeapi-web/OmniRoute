@@ -40,8 +40,18 @@ export class IplocateProvider implements FreeProxyProvider {
 
     const { upsertFreeProxy } = await import("../db/freeProxies");
     const baseUrl = process.env.FREE_PROXY_IPLOCATE_BASE_URL || BASE_URL;
-    // When FREE_PROXY_COUNTRY_FILTER is set (default: US), only store matching proxies.
-    const countryFilter = (process.env.FREE_PROXY_COUNTRY_FILTER ?? "US").toUpperCase() || null;
+    let countryFilter = "";
+    try {
+      const { getSettings } = await import("../db/settings");
+      const settings = await getSettings();
+      countryFilter = (settings.freeProxyCountryFilter as string) || "";
+    } catch {}
+
+    if (!countryFilter) {
+      countryFilter = (process.env.FREE_PROXY_COUNTRY_FILTER ?? "US").toUpperCase();
+    } else {
+      countryFilter = countryFilter.toUpperCase();
+    }
     const errors: string[] = [];
     let added = 0;
     let updated = 0;
@@ -72,7 +82,13 @@ export class IplocateProvider implements FreeProxyProvider {
             continue;
           }
           const resolvedCountry = p.country?.slice(0, 2).toUpperCase() || null;
-          if (countryFilter && resolvedCountry && resolvedCountry !== countryFilter) continue;
+          if (
+            countryFilter &&
+            countryFilter !== "ALL" &&
+            resolvedCountry &&
+            resolvedCountry !== countryFilter
+          )
+            continue;
           const item: FreeProxyItem = {
             source: "iplocate",
             host: p.ip,
@@ -86,8 +102,8 @@ export class IplocateProvider implements FreeProxyProvider {
           };
           const r = await upsertFreeProxy(item);
           if (r.action === "created") added++;
-          else updated++;
-          fetched++;
+          else if (r.action === "updated") updated++;
+          if (r.action !== "skipped") fetched++;
         }
       } catch (err) {
         errors.push(`${proto}: ${err instanceof Error ? err.message : String(err)}`);

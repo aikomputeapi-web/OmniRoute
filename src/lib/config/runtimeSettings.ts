@@ -17,7 +17,8 @@ export type RuntimeReloadSection =
   | "ccBridgeTransforms"
   | "systemTransforms"
   | "authzBypass"
-  | "bannedSignals";
+  | "bannedSignals"
+  | "freeProxyJob";
 
 export interface RuntimeReloadChange {
   section: RuntimeReloadSection;
@@ -45,6 +46,14 @@ interface RuntimeSettingsSnapshot {
   systemTransforms: unknown;
   authzBypass: AuthzBypassSnapshot;
   customBannedSignals: string[];
+  freeProxyAutoJobEnabled: boolean;
+  freeProxyCheckIntervalMin: number | null;
+  freeProxySyncIntervalMin: number | null;
+  freeProxyCountryFilter: string;
+  freeProxyMinQuality: number | null;
+  freeProxyMinTests: number | null;
+  freeProxyMinSuccessRate: number | null;
+  freeProxyAutoElevate: boolean;
 }
 
 // Default bypass policy: kill-switch on, `/api/mcp/` bypassable. Mirrors the
@@ -71,6 +80,14 @@ const DEFAULT_RUNTIME_SETTINGS_SNAPSHOT: RuntimeSettingsSnapshot = {
   systemTransforms: null,
   authzBypass: DEFAULT_AUTHZ_BYPASS_SNAPSHOT,
   customBannedSignals: [],
+  freeProxyAutoJobEnabled: false,
+  freeProxyCheckIntervalMin: 15,
+  freeProxySyncIntervalMin: 60,
+  freeProxyCountryFilter: "US",
+  freeProxyMinQuality: 40,
+  freeProxyMinTests: 5,
+  freeProxyMinSuccessRate: 100,
+  freeProxyAutoElevate: true,
 };
 
 let lastAppliedSnapshot: RuntimeSettingsSnapshot | null = null;
@@ -251,6 +268,15 @@ export function buildRuntimeSettingsSnapshot(
     systemTransforms: parseStoredJson(settings.systemTransforms, "systemTransforms"),
     authzBypass: normalizeAuthzBypass(settings),
     customBannedSignals: normalizeStringArray(settings.customBannedSignals),
+    freeProxyAutoJobEnabled: settings.freeProxyAutoJobEnabled === true,
+    freeProxyCheckIntervalMin: normalizeNumber(settings.freeProxyCheckIntervalMin),
+    freeProxySyncIntervalMin: normalizeNumber(settings.freeProxySyncIntervalMin),
+    freeProxyCountryFilter:
+      typeof settings.freeProxyCountryFilter === "string" ? settings.freeProxyCountryFilter : "US",
+    freeProxyMinQuality: normalizeNumber(settings.freeProxyMinQuality),
+    freeProxyMinTests: normalizeNumber(settings.freeProxyMinTests),
+    freeProxyMinSuccessRate: normalizeNumber(settings.freeProxyMinSuccessRate),
+    freeProxyAutoElevate: settings.freeProxyAutoElevate !== false,
   };
 }
 
@@ -508,6 +534,23 @@ export async function applyRuntimeSettings(
   ) {
     await applyModelsDevSyncSection(previousSnapshot, currentSnapshot, force);
     markChanged("modelsDevSync");
+  }
+
+  if (
+    force ||
+    (hasBootstrappedSnapshot &&
+      (currentSnapshot.freeProxyAutoJobEnabled !== previousSnapshot.freeProxyAutoJobEnabled ||
+        currentSnapshot.freeProxyCheckIntervalMin !== previousSnapshot.freeProxyCheckIntervalMin ||
+        currentSnapshot.freeProxySyncIntervalMin !== previousSnapshot.freeProxySyncIntervalMin ||
+        currentSnapshot.freeProxyCountryFilter !== previousSnapshot.freeProxyCountryFilter ||
+        currentSnapshot.freeProxyMinQuality !== previousSnapshot.freeProxyMinQuality ||
+        currentSnapshot.freeProxyMinTests !== previousSnapshot.freeProxyMinTests ||
+        currentSnapshot.freeProxyMinSuccessRate !== previousSnapshot.freeProxyMinSuccessRate ||
+        currentSnapshot.freeProxyAutoElevate !== previousSnapshot.freeProxyAutoElevate))
+  ) {
+    const { reloadFreeProxyJob } = await import("@/lib/jobs/freeProxyJob");
+    await reloadFreeProxyJob(settings);
+    markChanged("freeProxyJob");
   }
 
   if (force || hasChanged(currentSnapshot.corsOrigins, previousSnapshot.corsOrigins)) {

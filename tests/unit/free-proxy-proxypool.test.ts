@@ -14,9 +14,9 @@ describe("ProxyPoolProvider", () => {
     expect(provider.name).toBe("ProxyPool");
   });
 
-  it("should be disabled by default", () => {
+  it("should be enabled by default", () => {
     delete process.env.FREE_PROXY_PROXYPOOL_ENABLED;
-    expect(provider.isEnabled()).toBe(false);
+    expect(provider.isEnabled()).toBe(true);
   });
 
   it("should be enabled when env var is true", () => {
@@ -26,9 +26,9 @@ describe("ProxyPoolProvider", () => {
 
   describe("sync", () => {
     it("should return disabled error when provider is disabled", async () => {
-      delete process.env.FREE_PROXY_PROXYPOOL_ENABLED;
+      process.env.FREE_PROXY_PROXYPOOL_ENABLED = "false";
       const result = await provider.sync();
-      
+
       expect(result.fetched).toBe(0);
       expect(result.added).toBe(0);
       expect(result.updated).toBe(0);
@@ -39,17 +39,15 @@ describe("ProxyPoolProvider", () => {
       process.env.FREE_PROXY_PROXYPOOL_ENABLED = "true";
       process.env.FREE_PROXY_PROXYPOOL_API_URL = "http://test:5010";
 
-      const mockProxies = [
-        { proxy: "1.2.3.4:8080" },
-        { proxy: "5.6.7.8:3128" },
-      ];
+      const mockProxies = [{ proxy: "1.2.3.4:8080" }, { proxy: "5.6.7.8:3128" }];
 
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => mockProxies,
       });
 
-      const mockUpsert = vi.fn()
+      const mockUpsert = vi
+        .fn()
         .mockResolvedValueOnce({ action: "created" })
         .mockResolvedValueOnce({ action: "updated" });
 
@@ -103,7 +101,7 @@ describe("ProxyPoolProvider", () => {
 
       const result = await provider.sync();
 
-      expect(result.errors.some(e => e.includes("private"))).toBe(true);
+      expect(result.errors.some((e) => e.includes("private"))).toBe(true);
       expect(mockUpsert).toHaveBeenCalledTimes(1);
     });
 

@@ -7,6 +7,7 @@ import proxyFetch, {
   runWithProxyContextOrDirect,
   runWithTlsTracking,
   isTlsFingerprintActive,
+  testHooks,
 } from "../../open-sse/utils/proxyFetch.ts";
 import { getDefaultDispatcher } from "../../open-sse/utils/proxyDispatcher.ts";
 import tlsClient from "../../open-sse/utils/tlsClient.ts";
@@ -202,4 +203,37 @@ test("runWithProxyContextOrDirect runs the callback directly when the proxy is u
 
   assert.equal(ran, true);
   assert.equal(result, "ok");
+});
+
+test("runWithProxyContext falls back to a working candidate proxy in parallel when assigned proxy is unreachable", async () => {
+  await withHttpServer(
+    (_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    },
+    async (workingProxyUrl) => {
+      testHooks.getProxyCandidates = async () => {
+        return [
+          "http://127.0.0.1:9", // dead proxy
+          workingProxyUrl, // working proxy server
+        ];
+      };
+
+      try {
+        let ran = false;
+        const result = await runWithProxyContext(
+          { type: "http", host: "127.0.0.1", port: "9" }, // primary dead proxy
+          async () => {
+            ran = true;
+            return "swapped-ok";
+          }
+        );
+
+        assert.equal(ran, true, "callback must still execute successfully");
+        assert.equal(result, "swapped-ok");
+      } finally {
+        testHooks.getProxyCandidates = null;
+      }
+    }
+  );
 });
