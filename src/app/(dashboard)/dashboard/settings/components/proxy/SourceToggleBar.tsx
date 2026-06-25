@@ -10,6 +10,22 @@ export const ALL_SOURCE_IDS: SourceId[] = [
   "proxyscraper",
 ];
 
+export const SOURCE_LABELS: Record<SourceId, string> = {
+  "1proxy": "1proxy (Marketplace)",
+  proxifly: "Proxifly (API)",
+  iplocate: "IPLocate (GeoNode)",
+  proxypool: "ProxyPool (ProxyScrape)",
+  proxyscraper: "ProxyScraper (Local)",
+};
+
+export const SOURCE_DESCRIPTIONS: Record<SourceId, string> = {
+  "1proxy": "Quality-scored marketplace proxies from 1proxy API",
+  proxifly: "HTTP/HTTPS/SOCKS5 proxies from proxifly.dev",
+  iplocate: "Free proxies from GeoNode public API",
+  proxypool: "Free proxies from ProxyScrape API (no Docker needed)",
+  proxyscraper: "Local proxy-scraper-checker Docker output files",
+};
+
 export const FREE_POOL_DISABLED_SOURCES_KEY = "freePool.disabledSources";
 
 export function loadDisabledSources(): Set<SourceId> {
@@ -42,6 +58,14 @@ const SOURCES: Array<{ id: SourceId; label: string }> = [
   { id: "proxyscraper", label: "ProxyScraper" },
 ];
 
+const SOURCE_LABELS_SHORT: Record<SourceId, string> = {
+  "1proxy": "1proxy",
+  proxifly: "Proxifly",
+  iplocate: "IPLocate",
+  proxypool: "ProxyPool",
+  proxyscraper: "ProxyScraper",
+};
+
 export default function SourceToggleBar({ disabledSources, onToggle }: SourceToggleBarProps) {
   return (
     <div className="flex gap-2 flex-wrap" role="group" aria-label="Toggle proxy sources">
@@ -57,6 +81,7 @@ export default function SourceToggleBar({ disabledSources, onToggle }: SourceTog
             }`}
             onClick={() => onToggle(s.id)}
             aria-pressed={enabled}
+            title={SOURCE_LABELS_SHORT[s.id]}
           >
             <span
               className={`w-1.5 h-1.5 rounded-full ${enabled ? "bg-primary" : "bg-text-muted"}`}

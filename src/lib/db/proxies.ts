@@ -766,13 +766,14 @@ export async function resolveProxyForConnectionFromRegistry(connectionId: string
       }
     }
 
-    const globalAssignment = db
+    // Try legacy single global proxy first
+    const legacyGlobal = db
       .prepare(
-        `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes, p.family FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
+        `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes, p.family FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' AND a.scope_id IS NULL AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
       )
       .get();
-    if (globalAssignment) {
-      const record = toRecord(globalAssignment);
+    if (legacyGlobal) {
+      const record = toRecord(legacyGlobal);
       const relayAuth = record.type === "vercel" ? extractRelayAuth(record.notes) : undefined;
       return {
         proxy: {
@@ -786,6 +787,35 @@ export async function resolveProxyForConnectionFromRegistry(connectionId: string
         },
         level: "global",
         levelId: null,
+        source: "registry",
+      };
+    }
+
+    // Global pool round-robin: pick from __global__0..__global__19
+    const poolProxies = db
+      .prepare(
+        `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes, p.family, pa.scope_id FROM proxy_assignments pa JOIN proxy_registry p ON p.id = pa.proxy_id WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%' AND ${PROXY_ALIVE_PREDICATE} ORDER BY pa.scope_id ASC`
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    if (poolProxies.length > 0) {
+      // Round-robin: rotate through available pool proxies
+      const proxyIndex = Math.floor(Math.random() * poolProxies.length);
+      const selected = poolProxies[proxyIndex];
+      const record = toRecord(selected);
+      const relayAuth = record.type === "vercel" ? extractRelayAuth(record.notes) : undefined;
+      return {
+        proxy: {
+          type: record.type,
+          host: record.host,
+          port: record.port,
+          username: record.username,
+          password: record.password,
+          family: typeof record.family === "string" ? record.family : "auto",
+          ...(relayAuth !== undefined ? { relayAuth } : {}),
+        },
+        level: "global",
+        levelId: String(record.scope_id || null),
         source: "registry",
       };
     }
@@ -804,12 +834,27 @@ export async function resolveProxyForScopeFromRegistry(scope: string, scopeId?: 
     const normalizedScope = normalizeScope(scope);
 
     if (normalizedScope === "global") {
-      const globalAssignment = db
+      // Try legacy single global proxy first
+      const legacyGlobal = db
         .prepare(
-          `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes, p.family FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
+          `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes, p.family FROM proxy_assignments a JOIN proxy_registry p ON p.id = a.proxy_id WHERE a.scope = 'global' AND a.scope_id IS NULL AND ${PROXY_ALIVE_PREDICATE} LIMIT 1`
         )
         .get();
-      return globalAssignment ? toRegistryProxyResolution(globalAssignment, "global", null) : null;
+      if (legacyGlobal) return toRegistryProxyResolution(legacyGlobal, "global", null);
+
+      // Fallback to global pool round-robin
+      const poolProxies = db
+        .prepare(
+          `SELECT p.id, p.type, p.host, p.port, p.username, p.password, p.notes, p.family, pa.scope_id FROM proxy_assignments pa JOIN proxy_registry p ON p.id = pa.proxy_id WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%' AND ${PROXY_ALIVE_PREDICATE} ORDER BY pa.scope_id ASC`
+        )
+        .all() as Array<Record<string, unknown>>;
+
+      if (poolProxies.length > 0) {
+        const proxyIndex = Math.floor(Math.random() * poolProxies.length);
+        return toRegistryProxyResolution(poolProxies[proxyIndex], "global", null);
+      }
+
+      return null;
     }
 
     const normalizedScopeId = scopeId || null;

@@ -74,6 +74,12 @@ const ALLOWED_NVIDIA_MODELS = new Set([
   "openai/gpt-oss-20b",
   "z-ai/glm-5.1",
   "minimaxai/minimax-m2.7",
+  "google/gemma-4-31b-it",
+  "mistralai/mistral-large-3-675b-instruct-2512",
+  "mistralai/devstral-2-123b-instruct-2512",
+  "stepfun-ai/step-3.5-flash",
+  "nvidia/nemotron-3-super-120b-a12b",
+  "deepseek-ai/deepseek-v4-pro",
 ]);
 
 const FORCED_CONSOLIDATION_MODELS = new Set([
@@ -81,10 +87,10 @@ const FORCED_CONSOLIDATION_MODELS = new Set([
   "claude-opus-4-7",
   "claude-haiku-4-5",
   "minimax-m3",
-  "kimi-k2",
+  "kimi-2.6",
   "gpt-oss-120b",
   "gpt-oss-20b",
-  "glm-5",
+  "glm-5.1",
   "gpt-5-5",
   "gpt-5-5-high",
   "gpt-5-4",
@@ -93,18 +99,22 @@ const FORCED_CONSOLIDATION_MODELS = new Set([
   "gpt-5-3",
   "gpt-4o",
   "o3-mini",
+  "deepseek-v4",
   "deepseek-v3",
   "deepseek-r1",
   "gemini-3-1-pro",
   "gemini-3-flash",
   "gemini-3-1-flash-lite",
-  "gemini-2-5-pro",
-  "gemini-2-5-flash",
   "qwen3-coder",
   "llama-4-scout",
   "mistral-small",
+  "mistral-large",
+  "devstral-2",
   "ling-2-6",
   "qwen3-6",
+  "gemma-4-31b",
+  "step-3.5-flash",
+  "nemotron-3-super",
 ]);
 
 const BLOCKLISTED_ROOT_IDS = new Set([
@@ -1661,6 +1671,7 @@ export async function getUnifiedModelsResponse(
 
         // ── DeepSeek family ────────────────────────────────────────
         if (lower.includes("deepseek") && lower.includes("r1")) return "deepseek-r1";
+        if (lower.includes("deepseek") && (lower.includes("v4") || lower.includes("v-4"))) return "deepseek-v4";
         if (lower.includes("deepseek")) return "deepseek-v3";
 
         // ── Reasoning ──────────────────────────────────────────────
@@ -1668,15 +1679,20 @@ export async function getUnifiedModelsResponse(
 
         // ── Open weights ───────────────────────────────────────────
         if (lower.includes("llama") && lower.includes("scout")) return "llama-4-scout";
+        if (lower.includes("mistral") && lower.includes("large")) return "mistral-large";
         if (lower.includes("mistral") && lower.includes("small")) return "mistral-small";
+        if (lower.includes("devstral")) return "devstral-2";
         if (lower.includes("ling") && (lower.includes("2.6") || lower.includes("2-6")))
           return "ling-2-6";
         if (lower.includes("qwen") && !lower.includes("coder")) return "qwen3-6";
+        if (lower.includes("gemma") && lower.includes("4") && lower.includes("31b")) return "gemma-4-31b";
+        if (lower.includes("step") && lower.includes("3.5")) return "step-3.5-flash";
+        if (lower.includes("nemotron") && lower.includes("3") && lower.includes("super")) return "nemotron-3-super";
 
         // ── Other families ─────────────────────────────────────────
         if (lower.includes("minimax")) return "minimax-m3";
-        if (lower.includes("kimi")) return "kimi-k2";
-        if (lower.includes("glm")) return "glm-5";
+        if (lower.includes("kimi")) return "kimi-2.6";
+        if (lower.includes("glm")) return "glm-5.1";
         if (lower.includes("qwen") && lower.includes("coder")) return "qwen3-coder";
 
         return rootId;

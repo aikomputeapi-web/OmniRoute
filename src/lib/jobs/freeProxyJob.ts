@@ -20,10 +20,12 @@ import { createLogger } from "@/shared/utils/logger";
 import { getDbInstance } from "@/lib/db/core";
 import { getSettings } from "@/lib/db/settings";
 import { randomUUID } from "crypto";
+import { resolveEgressIp } from "@/lib/proxyEgress";
 
 const log = createLogger("free-proxy-job");
 
 const PROXY_NAME_PREFIX = "auto-us";
+const GLOBAL_POOL_SIZE = 20;
 
 let checkTimer: NodeJS.Timeout | null = null;
 let syncTimer: NodeJS.Timeout | null = null;
@@ -57,6 +59,8 @@ async function getJobSettings() {
         ? Number(settings.freeProxyMinSuccessRate)
         : 100;
     const autoElevate = settings.freeProxyAutoElevate !== false;
+    const poolSize = Math.min(50, Math.max(5, Number(settings.freeProxyGlobalPoolSize) || GLOBAL_POOL_SIZE));
+    const autoRemoveDead = settings.freeProxyAutoRemoveDead !== false;
 
     return {
       enabled,
@@ -67,6 +71,8 @@ async function getJobSettings() {
       minTests,
       minSuccessRate,
       autoElevate,
+      poolSize,
+      autoRemoveDead,
     };
   } catch (err) {
     log.warn({ err }, "Failed to get settings for free proxy job, using defaults");
@@ -185,81 +191,106 @@ async function pickBestProxy(country: string, minQuality: number): Promise<Candi
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Promote best proxy to the global proxy_registry slot
+// Step 3: Promote up to GLOBAL_POOL_SIZE best proxies to the global pool
+// Uses scope='global' with incrementing scope_id ('__global__0'..'__global__19')
+// so the resolver can round-robin across the pool.
 // ---------------------------------------------------------------------------
 
-async function promoteProxyToGlobal(candidate: CandidateRow, country: string): Promise<void> {
+async function promoteProxyToGlobal(candidate: CandidateRow, country: string, poolSize: number = GLOBAL_POOL_SIZE): Promise<void> {
   const db = getDbInstance();
   const now = new Date().toISOString();
   const proxyUrl = `${candidate.type}://${candidate.host}:${candidate.port}`;
 
-  db.transaction(() => {
-    // Check if an identical proxy is already the global slot
-    const existing = db
-      .prepare(
-        `SELECT pr.id, pr.host, pr.port FROM proxy_registry pr
-         JOIN proxy_assignments pa ON pa.proxy_id = pr.id
-         WHERE pa.scope = 'global'
-           AND pr.source = 'auto-us'
-           AND pr.host = ? AND pr.port = ?
-         LIMIT 1`
-      )
-      .get(candidate.host, candidate.port) as { id: string } | undefined;
+  const existing = db
+    .prepare(
+      `SELECT pr.id FROM proxy_registry pr
+       JOIN proxy_assignments pa ON pa.proxy_id = pr.id
+       WHERE pa.scope = 'global'
+         AND pr.source = 'auto-us'
+         AND pr.host = ? AND pr.port = ?
+       LIMIT 1`
+    )
+    .get(candidate.host, candidate.port) as { id: string } | undefined;
 
-    if (existing) {
-      // Touch the updated_at so we know this proxy was re-validated
-      db.prepare("UPDATE proxy_registry SET status = 'active', updated_at = ? WHERE id = ?").run(
-        now,
-        existing.id
-      );
-      return;
-    }
-
-    // Remove any previous auto-us global proxy assignment + its registry row
-    const oldGlobal = db
-      .prepare(
-        `SELECT pr.id FROM proxy_registry pr
-         JOIN proxy_assignments pa ON pa.proxy_id = pr.id
-         WHERE pa.scope = 'global' AND pr.source = 'auto-us'
-         LIMIT 1`
-      )
-      .get() as { id: string } | undefined;
-
-    if (oldGlobal) {
-      db.prepare("DELETE FROM proxy_assignments WHERE proxy_id = ?").run(oldGlobal.id);
-      db.prepare("DELETE FROM proxy_registry WHERE id = ?").run(oldGlobal.id);
-    }
-
-    // Insert new registry entry
-    const newId = randomUUID();
-    db.prepare(
-      `INSERT INTO proxy_registry
-       (id, name, type, host, port, username, password, region, notes, status, source, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, '', '', ?, ?, 'active', ?, ?, ?)`
-    ).run(
-      newId,
-      `${PROXY_NAME_PREFIX}-${candidate.host}`,
-      candidate.type,
-      candidate.host,
-      candidate.port,
-      country,
-      `Auto-selected ${country} proxy`,
-      "auto-us",
+  if (existing) {
+    db.prepare("UPDATE proxy_registry SET status = 'active', updated_at = ? WHERE id = ?").run(
       now,
-      now
+      existing.id
     );
+    return;
+  }
 
-    // Assign to global scope (upsert: remove old global assignment if it exists)
-    db.prepare("DELETE FROM proxy_assignments WHERE scope = 'global' AND scope_id IS NULL").run();
+  const newId = randomUUID();
+  db.prepare(
+    `INSERT INTO proxy_registry
+     (id, name, type, host, port, username, password, region, notes, status, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, '', '', ?, ?, 'active', ?, ?, ?)`
+  ).run(
+    newId,
+    `${PROXY_NAME_PREFIX}-${candidate.host}`,
+    candidate.type,
+    candidate.host,
+    candidate.port,
+    country,
+    `Auto-selected ${country} proxy`,
+    "auto-us",
+    now,
+    now
+  );
+
+  // Find an empty slot in the global pool (0..GLOBAL_POOL_SIZE-1) or replace the oldest/worst
+  const existingPool = db
+    .prepare(
+      `SELECT pa.scope_id, pr.quality_score, pr.updated_at FROM proxy_assignments pa
+       JOIN proxy_registry pr ON pr.id = pa.proxy_id
+       WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
+       ORDER BY CAST(SUBSTR(pa.scope_id, 11) AS INTEGER) ASC`
+    )
+    .all() as Array<{ scope_id: string; quality_score: number | null; updated_at: string }>;
+
+  const usedSlots = new Set<number>();
+  for (const entry of existingPool) {
+    const slotNum = parseInt(entry.scope_id.replace("__global__", ""), 10);
+    if (!isNaN(slotNum)) usedSlots.add(slotNum);
+  }
+
+  let targetSlot = -1;
+  for (let i = 0; i < poolSize; i++) {
+    if (!usedSlots.has(i)) {
+      targetSlot = i;
+      break;
+    }
+  }
+
+  if (targetSlot === -1) {
+    // Pool full — replace the proxy with lowest quality score
+    const worst = db
+      .prepare(
+        `SELECT pa.scope_id, pr.id FROM proxy_assignments pa
+         JOIN proxy_registry pr ON pr.id = pa.proxy_id
+         WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
+         ORDER BY pr.quality_score ASC, pr.updated_at ASC
+         LIMIT 1`
+      )
+      .get() as { scope_id: string; id: string } | undefined;
+
+    if (worst) {
+      db.prepare("DELETE FROM proxy_assignments WHERE proxy_id = ?").run(worst.id);
+      db.prepare("DELETE FROM proxy_registry WHERE id = ?").run(worst.id);
+      targetSlot = parseInt(worst.scope_id.replace("__global__", ""), 10) || 0;
+    }
+  }
+
+  if (targetSlot >= 0) {
     db.prepare(
       `INSERT INTO proxy_assignments (scope, scope_id, proxy_id, created_at, updated_at)
-       VALUES ('global', NULL, ?, ?, ?)`
-    ).run(newId, now, now);
-  })();
+       VALUES ('global', ?, ?, ?, ?)`
+    ).run(`__global__${targetSlot}`, newId, now, now);
+  }
 
   log.info(
-    { host: candidate.host, port: candidate.port, type: candidate.type, url: proxyUrl },
-    `Promoted ${country} proxy to global registry slot`
+    { host: candidate.host, port: candidate.port, type: candidate.type, url: proxyUrl, slot: targetSlot },
+    `Promoted ${country} proxy to global pool slot ${targetSlot}`
   );
 }
 
@@ -416,13 +447,110 @@ async function runFreeProxySyncTick(): Promise<void> {
     log.warn({ err }, "Failed to delete non-matching country free proxies (non-fatal)");
   }
 
-  // Step 3: Pick best proxy and promote to global slot
+  // Step 3: Pick top proxies and promote to global pool (fills GLOBAL_POOL_SIZE slots)
   try {
-    const best = await pickBestProxy(settings.countryFilter, settings.minQuality);
-    if (best) {
-      await promoteProxyToGlobal(best, settings.countryFilter);
+    const db = getDbInstance();
+    const query =
+      settings.countryFilter === "ALL"
+        ? `SELECT id, host, port, type, quality_score, latency_ms
+           FROM free_proxies
+           WHERE test_count >= ?
+             AND success_count = test_count
+             AND quality_score >= ?
+           ORDER BY quality_score DESC,
+             CASE WHEN latency_ms IS NULL THEN 1 ELSE 0 END,
+             latency_ms ASC
+           LIMIT ?`
+        : `SELECT id, host, port, type, quality_score, latency_ms
+           FROM free_proxies
+           WHERE UPPER(country_code) = ?
+             AND test_count >= ?
+             AND success_count = test_count
+             AND quality_score >= ?
+           ORDER BY quality_score DESC,
+             CASE WHEN latency_ms IS NULL THEN 1 ELSE 0 END,
+             latency_ms ASC
+           LIMIT ?`;
+
+    const candidateLimit = settings.poolSize * 2;
+    const params =
+      settings.countryFilter === "ALL"
+        ? [settings.minTests, settings.minQuality, candidateLimit]
+        : [settings.countryFilter, settings.minTests, settings.minQuality, candidateLimit];
+
+    const candidates = db.prepare(query).all(...params) as CandidateRow[];
+
+    if (candidates.length === 0) {
+      log.info(`No live ${settings.countryFilter} proxies found — global pool unchanged`);
     } else {
-      log.info(`No live ${settings.countryFilter} proxy found — global slot unchanged`);
+      // Liveness-test candidates in parallel, promote the healthy ones
+      const { testSingleProxy } = await import("@omniroute/open-sse/utils/proxyFallback");
+      const TEST_URL = "https://api.openai.com/v1/models";
+      const testResults = await Promise.all(
+        candidates.slice(0, 30).map(async (row) => {
+          const url = `${row.type}://${row.host}:${row.port}`;
+          const { ok } = await testSingleProxy(url, TEST_URL, 5000);
+          return { row, ok };
+        })
+      );
+
+      const alive = testResults.filter((r) => r.ok).map((r) => r.row);
+      log.info(
+        { tested: candidates.length, alive: alive.length },
+        `Liveness test complete for proxy promotion candidates`
+      );
+
+          // Clean up dead proxies from the global pool
+      if (settings.autoRemoveDead) {
+        const deadInPool = db
+          .prepare(
+            `SELECT pr.id FROM proxy_registry pr
+             JOIN proxy_assignments pa ON pa.proxy_id = pr.id
+             WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
+               AND (pr.status IS NULL OR LOWER(pr.status) IN ('inactive','error','disabled','dead','down'))`
+          )
+          .all() as Array<{ id: string }>;
+        for (const dead of deadInPool) {
+          db.prepare("DELETE FROM proxy_assignments WHERE proxy_id = ?").run(dead.id);
+          db.prepare("DELETE FROM proxy_registry WHERE id = ?").run(dead.id);
+          log.info({ id: dead.id }, "Cleaned up dead proxy from global pool");
+        }
+      }
+
+      // Also clean proxies that fail egress check
+      const poolProxies = db
+        .prepare(
+          `SELECT pr.id, pr.type, pr.host, pr.port FROM proxy_registry pr
+           JOIN proxy_assignments pa ON pa.proxy_id = pr.id
+           WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
+             AND pr.source = 'auto-us'`
+        )
+        .all() as Array<{ id: string; type: string; host: string; port: number }>;
+
+      for (const pp of poolProxies) {
+        try {
+          const url = `${pp.type}://${pp.host}:${pp.port}`;
+          const egress = await resolveEgressIp(url, { force: true });
+          if (!egress.ip || egress.error) {
+            db.prepare("DELETE FROM proxy_assignments WHERE proxy_id = ?").run(pp.id);
+            db.prepare("DELETE FROM proxy_registry WHERE id = ?").run(pp.id);
+            log.info({ host: pp.host }, "Removed dead proxy from global pool (egress check failed)");
+          }
+        } catch {
+          db.prepare("DELETE FROM proxy_assignments WHERE proxy_id = ?").run(pp.id);
+          db.prepare("DELETE FROM proxy_registry WHERE id = ?").run(pp.id);
+        }
+      }
+
+      // Promote alive candidates to fill pool slots
+      for (const candidate of alive.slice(0, settings.poolSize)) {
+        await promoteProxyToGlobal(candidate, settings.countryFilter, settings.poolSize);
+      }
+
+      log.info(
+        { promoted: Math.min(alive.length, GLOBAL_POOL_SIZE) },
+        `Promoted proxies to global pool`
+      );
     }
   } catch (err) {
     log.warn({ err }, "Proxy promotion failed (non-fatal)");

@@ -15,6 +15,7 @@ type FreePoolStats = {
   inPool: number;
   avgQuality: number | null;
   lastSyncAt: string | null;
+  bySource: Array<{ source: string; count: number }>;
 };
 
 export default function FreePoolTab() {
@@ -33,6 +34,7 @@ export default function FreePoolTab() {
   const [bulkProgress, setBulkProgress] = useState<string | null>(null);
   const [runningScraper, setRunningScraper] = useState(false);
   const [testingAll, setTestingAll] = useState(false);
+  const [removingBad, setRemovingBad] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<string>("");
   const [fetchingLogs, setFetchingLogs] = useState(false);
@@ -50,7 +52,6 @@ export default function FreePoolTab() {
     setFetchingLogs(false);
   }, []);
 
-  // Auto-scroll the log console to the bottom whenever new content arrives
   useEffect(() => {
     if (logPreRef.current) {
       logPreRef.current.scrollTop = logPreRef.current.scrollHeight;
@@ -60,9 +61,6 @@ export default function FreePoolTab() {
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
     if (showLogs || runningScraper) {
-      // Defer the initial fetch to a microtask so the setState inside
-      // fetchLogs isn't called synchronously within this effect body
-      // (avoids cascading renders flagged by react-hooks/set-state-in-effect).
       Promise.resolve().then(() => void fetchLogs());
       intervalId = setInterval(() => {
         void fetchLogs();
@@ -73,9 +71,7 @@ export default function FreePoolTab() {
     };
   }, [showLogs, runningScraper, fetchLogs]);
 
-  // Load persisted disabled-sources from localStorage on mount
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration, runs once
     setDisabledSources(loadDisabledSources());
   }, []);
 
@@ -119,7 +115,6 @@ export default function FreePoolTab() {
   }, [disabledSources, filterProtocol, filterCountry, minQuality]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch on filter change
     loadData();
   }, [loadData]);
 
@@ -140,30 +135,23 @@ export default function FreePoolTab() {
 
   const handleRunScraper = async () => {
     setRunningScraper(true);
-    setShowLogs(true); // auto-open console so user can watch the scrape
+    setShowLogs(true);
     try {
       const res = await fetch("/api/settings/free-proxies/scraper/start", {
         method: "POST",
       });
       if (!res.ok) {
-        console.error("[Scraper] start failed:", res.status, await res.text());
         setRunningScraper(false);
         return;
       }
-    } catch (err) {
-      console.error("[Scraper] start error:", err);
+    } catch {
       setRunningScraper(false);
       return;
     }
-    // Keep runningScraper=true for up to 3 minutes so the log console keeps
-    // polling throughout the full scrape. Reload proxy list when done.
-    setTimeout(
-      () => {
-        setRunningScraper(false);
-        void loadData();
-      },
-      3 * 60 * 1000
-    );
+    setTimeout(() => {
+      setRunningScraper(false);
+      void loadData();
+    }, 3 * 60 * 1000);
   };
 
   const handleTestAll = async () => {
@@ -175,6 +163,34 @@ export default function FreePoolTab() {
       setTimeout(() => loadData(), 2000);
     } catch {}
     setTestingAll(false);
+  };
+
+  const handleRemoveBad = async () => {
+    setRemovingBad(true);
+    try {
+      const { testSingleProxy } = await import("@omniroute/open-sse/utils/proxyFallback");
+      const TEST_URL = "https://api.openai.com/v1/models";
+
+      // Test all proxies that have been validated before (test_count > 0)
+      const candidates = proxies.filter((p) => p.qualityScore != null);
+      let removed = 0;
+      for (const proxy of candidates) {
+        try {
+          const url = `${proxy.type}://${proxy.host}:${proxy.port}`;
+          const { ok } = await testSingleProxy(url, TEST_URL, 5000);
+          if (!ok) {
+            await fetch(`/api/settings/free-proxies?id=${proxy.id}`, { method: "DELETE" });
+            removed++;
+          }
+        } catch {
+          await fetch(`/api/settings/free-proxies?id=${proxy.id}`, { method: "DELETE" });
+          removed++;
+        }
+      }
+      alert(`Removed ${removed} dead proxy(s) from free pool.`);
+      await loadData();
+    } catch {}
+    setRemovingBad(false);
   };
 
   const handleAddToPool = async (id: string) => {
@@ -244,6 +260,22 @@ export default function FreePoolTab() {
 
   const notInPoolProxies = proxies.filter((p) => !p.inPool);
 
+  // Source colors
+  const sourceColors: Record<string, string> = {
+    "1proxy": "bg-violet-500/15 text-violet-400 border-violet-500/30",
+    proxifly: "bg-blue-500/15 text-blue-400 border-blue-500/30",
+    iplocate: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+    proxypool: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    proxyscraper: "bg-pink-500/15 text-pink-400 border-pink-500/30",
+  };
+  const sourceIcons: Record<string, string> = {
+    "1proxy": "shield",
+    proxifly: "flight",
+    iplocate: "map",
+    proxypool: "pool",
+    proxyscraper: "search",
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -257,55 +289,30 @@ export default function FreePoolTab() {
           >
             <option value="">{t("proxyFreePoolProtocol")}</option>
             {["http", "https", "socks4", "socks5"].map((p) => (
-              <option key={p} value={p}>
-                {p.toUpperCase()}
-              </option>
+              <option key={p} value={p}>{p.toUpperCase()}</option>
             ))}
           </select>
-          <input
-            type="text"
-            placeholder={t("proxyFreePoolCountryPlaceholder")}
-            value={filterCountry}
+          <input type="text" placeholder={t("proxyFreePoolCountryPlaceholder")} value={filterCountry}
             onChange={(e) => setFilterCountry(e.target.value.toUpperCase().slice(0, 2))}
             className="text-xs bg-surface-alt border border-border rounded px-2 py-1 w-28"
             aria-label={t("proxyFreePoolFilterCountry")}
           />
-          <input
-            type="number"
-            placeholder={t("proxyFreePoolMinQualityPlaceholder")}
-            value={minQuality}
-            onChange={(e) => setMinQuality(e.target.value)}
-            min={0}
-            max={100}
+          <input type="number" placeholder={t("proxyFreePoolMinQualityPlaceholder")} value={minQuality}
+            onChange={(e) => setMinQuality(e.target.value)} min={0} max={100}
             className="text-xs bg-surface-alt border border-border rounded px-2 py-1 w-24"
             aria-label={t("proxyFreePoolMinQualityLabel")}
           />
-          <Button
-            size="sm"
-            variant="secondary"
-            icon="play_arrow"
-            onClick={handleRunScraper}
-            disabled={runningScraper}
-          >
+          <Button size="sm" variant="secondary" icon="play_arrow" onClick={handleRunScraper} disabled={runningScraper}>
             {runningScraper ? "Scraping..." : "Scrape Proxies"}
           </Button>
-          <Button
-            size="sm"
-            variant={showLogs ? "primary" : "secondary"}
-            icon="terminal"
-            onClick={() => setShowLogs((prev) => !prev)}
-            data-testid="free-pool-toggle-logs"
-          >
+          <Button size="sm" variant={showLogs ? "primary" : "secondary"} icon="terminal" onClick={() => setShowLogs((prev) => !prev)}>
             {showLogs ? "Hide Console" : "Scraper Console"}
           </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            icon="network_check"
-            onClick={handleTestAll}
-            disabled={testingAll}
-          >
+          <Button size="sm" variant="secondary" icon="network_check" onClick={handleTestAll} disabled={testingAll}>
             {testingAll ? "Testing..." : "Test All"}
+          </Button>
+          <Button size="sm" variant="secondary" icon="cleaning_services" onClick={handleRemoveBad} disabled={removingBad}>
+            {removingBad ? "Removing..." : "Remove Bad"}
           </Button>
           <Button size="sm" variant="secondary" icon="sync" onClick={handleSync} disabled={syncing}>
             {syncing ? t("syncing") : t("proxyFreePoolSyncAll")}
@@ -314,22 +321,22 @@ export default function FreePoolTab() {
       </div>
 
       {stats && (
-        <div className="text-xs text-text-muted flex gap-4 flex-wrap">
-          <span>
-            {t("proxyFreePoolTotal")}: {stats.total}
-          </span>
-          <span>
-            {t("proxyFreePoolInPool")}: {stats.inPool}
-          </span>
-          {stats.avgQuality != null && (
-            <span>
-              {t("proxyFreePoolAvgQuality")}: {stats.avgQuality}
-            </span>
-          )}
-          {stats.lastSyncAt && (
-            <span>
-              {t("lastSync")}: {new Date(stats.lastSyncAt).toLocaleTimeString()}
-            </span>
+        <div className="text-xs text-text-muted flex flex-col gap-2">
+          <div className="flex gap-4 flex-wrap">
+            <span>{t("proxyFreePoolTotal")}: {stats.total}</span>
+            <span>{t("proxyFreePoolInPool")}: {stats.inPool}</span>
+            {stats.avgQuality != null && <span>{t("proxyFreePoolAvgQuality")}: {stats.avgQuality}</span>}
+            {stats.lastSyncAt && <span>{t("lastSync")}: {new Date(stats.lastSyncAt).toLocaleTimeString()}</span>}
+          </div>
+          {stats.bySource && stats.bySource.length > 0 && (
+            <div className="flex gap-2 flex-wrap">
+              {stats.bySource.map((s) => (
+                <span key={s.source} className={`px-2 py-0.5 rounded text-[10px] font-medium border ${sourceColors[s.source] || "bg-surface-alt text-text-muted border-border"}`}>
+                  <span className="material-symbols-outlined text-[10px] align-middle mr-0.5">{sourceIcons[s.source] || "public"}</span>
+                  {s.source}: {s.count}
+                </span>
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -339,31 +346,17 @@ export default function FreePoolTab() {
           <div className="flex items-center justify-between border-b border-white/10 pb-2">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
-                Proxy Scraper Console Logs
-              </span>
+              <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">Proxy Scraper Console Logs</span>
             </div>
             <div className="flex items-center gap-3">
-              {fetchingLogs && (
-                <span className="text-[10px] font-mono text-zinc-400">Updating...</span>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  setLogs("");
-                  void fetchLogs();
-                }}
-                className="text-xs font-mono text-zinc-400 hover:text-white transition-colors"
-                aria-label="Refresh Scraper Console Logs"
-              >
+              {fetchingLogs && <span className="text-[10px] font-mono text-zinc-400">Updating...</span>}
+              <button type="button" onClick={() => { setLogs(""); void fetchLogs(); }}
+                className="text-xs font-mono text-zinc-400 hover:text-white transition-colors" aria-label="Refresh Scraper Console Logs">
                 Clear/Refresh
               </button>
             </div>
           </div>
-          <pre
-            ref={logPreRef}
-            className="font-mono text-xs overflow-auto bg-black text-emerald-400 p-3 h-64 shadow-inner whitespace-pre-wrap select-text scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent"
-          >
+          <pre ref={logPreRef} className="font-mono text-xs overflow-auto bg-black text-emerald-400 p-3 h-64 shadow-inner whitespace-pre-wrap select-text scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
             {logs || "No log activity recorded yet. Run a scrape to begin."}
           </pre>
         </div>
@@ -381,11 +374,7 @@ export default function FreePoolTab() {
 
       {notInPoolProxies.length > 0 && selected.size === 0 && (
         <div className="flex justify-end">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => handleBulkAdd(notInPoolProxies.slice(0, 100).map((p) => p.id))}
-          >
+          <Button size="sm" variant="secondary" onClick={() => handleBulkAdd(notInPoolProxies.slice(0, 100).map((p) => p.id))}>
             {t("proxyFreePoolAddVisible")}
           </Button>
         </div>
@@ -396,51 +385,26 @@ export default function FreePoolTab() {
           <thead className="bg-surface-alt text-text-muted text-xs">
             <tr>
               <th className="px-3 py-2 text-left w-8" scope="col"></th>
-              <th className="px-3 py-2 text-left" scope="col">
-                {t("proxyFreePoolSource")}
-              </th>
-              <th className="px-3 py-2 text-left" scope="col">
-                {t("proxyFreePoolHostPort")}
-              </th>
-              <th className="px-3 py-2 text-left" scope="col">
-                {t("proxyFreePoolType")}
-              </th>
-              <th className="px-3 py-2 text-left" scope="col">
-                {t("proxyFreePoolCountry")}
-              </th>
-              <th className="px-3 py-2 text-left" scope="col">
-                {t("proxyFreePoolQuality")}
-              </th>
-              <th className="px-3 py-2 text-left" scope="col">
-                {t("proxyFreePoolLatency")}
-              </th>
+              <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolSource")}</th>
+              <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolHostPort")}</th>
+              <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolType")}</th>
+              <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolCountry")}</th>
+              <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolQuality")}</th>
+              <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolLatency")}</th>
               <th className="px-3 py-2 text-left" scope="col"></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-text-muted">
-                  {t("loading")}
-                </td>
-              </tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-text-muted">{t("loading")}</td></tr>
             ) : proxies.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="px-3 py-8 text-center text-text-muted">
-                  {t("proxyFreePoolEmpty")}
-                </td>
-              </tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-text-muted">{t("proxyFreePoolEmpty")}</td></tr>
             ) : (
               proxies.map((p) => (
                 <FreeProxyRow
-                  key={p.id}
-                  proxy={p}
-                  selected={selected.has(p.id)}
-                  onToggleSelect={handleToggleSelect}
-                  onAddToPool={handleAddToPool}
-                  adding={addingIds.has(p.id)}
-                  onDelete={handleDelete}
-                  deleting={deletingIds.has(p.id)}
+                  key={p.id} proxy={p} selected={selected.has(p.id)}
+                  onToggleSelect={handleToggleSelect} onAddToPool={handleAddToPool}
+                  adding={addingIds.has(p.id)} onDelete={handleDelete} deleting={deletingIds.has(p.id)}
                 />
               ))
             )}

@@ -21,6 +21,9 @@ export default function OptionsTab() {
   const [minTests, setMinTests] = useState(5);
   const [minSuccessRate, setMinSuccessRate] = useState(100);
   const [autoElevate, setAutoElevate] = useState(true);
+  const [globalPoolSize, setGlobalPoolSize] = useState(20);
+  const [rotationStrategy, setRotationStrategy] = useState("random");
+  const [autoRemoveDead, setAutoRemoveDead] = useState(true);
 
   useEffect(() => {
     async function loadSettings() {
@@ -36,6 +39,9 @@ export default function OptionsTab() {
           setMinTests(data.freeProxyMinTests ?? 5);
           setMinSuccessRate(data.freeProxyMinSuccessRate ?? 100);
           setAutoElevate(data.freeProxyAutoElevate !== false);
+          setGlobalPoolSize(data.freeProxyGlobalPoolSize ?? 20);
+          setRotationStrategy(data.freeProxyRotationStrategy ?? "random");
+          setAutoRemoveDead(data.freeProxyAutoRemoveDead !== false);
         } else {
           setError("Failed to load proxy settings");
         }
@@ -66,6 +72,9 @@ export default function OptionsTab() {
           freeProxyMinTests: Number(minTests),
           freeProxyMinSuccessRate: Number(minSuccessRate),
           freeProxyAutoElevate: autoElevate,
+          freeProxyGlobalPoolSize: Number(globalPoolSize),
+          freeProxyRotationStrategy: rotationStrategy,
+          freeProxyAutoRemoveDead: autoRemoveDead,
         }),
       });
 
@@ -235,17 +244,69 @@ export default function OptionsTab() {
                   className="w-4 h-4 rounded text-primary focus:ring-primary border-black/10 dark:border-white/10"
                 />
                 <div className="flex flex-col gap-0.5">
-                  <label
-                    className="text-sm font-semibold/80 select-none cursor-pointer"
-                    htmlFor="autoElevate"
-                  >
-                    {t("freeProxyAutoElevateLabelSettings") || "Auto-Elevate Vetted Proxies"}
+                  <label className="text-sm font-semibold/80 select-none cursor-pointer" htmlFor="autoElevate">
+                    Auto-Elevate Vetted Proxies
                   </label>
                   <span className="text-xs text-text-muted">
-                    {t("freeProxyAutoElevateDesc") ||
-                      "Automatically promote candidates to active pool once fully vetted."}
+                    Automatically promote fully-vetted free proxies to the managed pool.
                   </span>
                 </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2 col-span-1 md:col-span-2">
+                <input
+                  id="autoRemoveDead"
+                  type="checkbox"
+                  checked={autoRemoveDead}
+                  onChange={(e) => setAutoRemoveDead(e.target.checked)}
+                  className="w-4 h-4 rounded text-primary focus:ring-primary border-black/10 dark:border-white/10"
+                />
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-sm font-semibold/80 select-none cursor-pointer" htmlFor="autoRemoveDead">
+                    Auto-Remove Dead Proxies
+                  </label>
+                  <span className="text-xs text-text-muted">
+                    Automatically remove dead/failing proxies from the global pool on each sync.
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-semibold" htmlFor="globalPoolSize">
+                  Global Pool Size
+                </label>
+                <input
+                  id="globalPoolSize"
+                  type="number"
+                  min={5}
+                  max={50}
+                  value={globalPoolSize}
+                  onChange={(e) => setGlobalPoolSize(Math.min(50, Math.max(5, Number(e.target.value))))}
+                  className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
+                />
+                <span className="text-xs text-text-muted">
+                  Number of best proxies to maintain in the global pool (5-50).
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-semibold" htmlFor="rotationStrategy">
+                  Pool Rotation Strategy
+                </label>
+                <select
+                  id="rotationStrategy"
+                  value={rotationStrategy}
+                  onChange={(e) => setRotationStrategy(e.target.value)}
+                  className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="random">Random (spread load evenly)</option>
+                  <option value="lowest-latency">Lowest Latency First</option>
+                  <option value="round-robin">Round Robin (sequential)</option>
+                  <option value="highest-quality">Highest Quality First</option>
+                </select>
+                <span className="text-xs text-text-muted">
+                  How to pick the next proxy from the global pool for each request.
+                </span>
               </div>
             </div>
           )}

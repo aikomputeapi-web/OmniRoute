@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const freeProxySourceSchema = z.enum(["1proxy", "proxifly", "iplocate", "proxyscraper"]);
+export const freeProxySourceSchema = z.enum(["1proxy", "proxifly", "iplocate", "proxypool", "proxyscraper"]);
 
 export const freeProxyListSchema = z.object({
   sources: z

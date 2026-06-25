@@ -1,19 +1,16 @@
 import type { FreeProxyItem, FreeProxySyncResult, FreeProxyProvider } from "./types";
 import { isPrivateHost } from "@/shared/network/outboundUrlGuard";
 
-const DEFAULT_API_URL = "http://localhost:5010";
+const DEFAULT_API_URL = "https://api.proxyscrape.com/v2";
 const DEFAULT_MAX = 500;
-
-type ProxyPoolProxy = {
-  proxy: string; // format: "ip:port"
-};
+const DEFAULT_TIMEOUT_MS = 30000;
+const PROTOCOLS = ["http", "socks4", "socks5"] as const;
 
 export class ProxyPoolProvider implements FreeProxyProvider {
   readonly id = "proxypool" as const;
   readonly name = "ProxyPool";
 
   isEnabled(): boolean {
-    // Default ON — opt out with FREE_PROXY_PROXYPOOL_ENABLED=false
     return process.env.FREE_PROXY_PROXYPOOL_ENABLED !== "false";
   }
 
@@ -31,58 +28,81 @@ export class ProxyPoolProvider implements FreeProxyProvider {
 
     const { upsertFreeProxy } = await import("../db/freeProxies");
     const { apiUrl, maxProxies } = this.getConfig();
+
+    let countryFilter = "";
+    try {
+      const { getSettings } = await import("../db/settings");
+      const settings = await getSettings();
+      countryFilter = (settings.freeProxyCountryFilter as string) || "";
+    } catch {}
+
+    if (!countryFilter) {
+      countryFilter = (process.env.FREE_PROXY_COUNTRY_FILTER ?? "US").toUpperCase();
+    } else {
+      countryFilter = countryFilter.toUpperCase();
+    }
+
     const errors: string[] = [];
     let added = 0;
     let updated = 0;
+    let fetched = 0;
 
-    try {
-      const res = await fetch(`${apiUrl}/get_all/`, { signal: AbortSignal.timeout(30000) });
+    for (const protocol of PROTOCOLS) {
+      try {
+        const params = new URLSearchParams({
+          request: "displayproxies",
+          protocol,
+          timeout: "10000",
+          country: countryFilter !== "ALL" ? countryFilter.toLowerCase() : "all",
+          ssl: "all",
+          anonymity: "all",
+        });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        errors.push(`HTTP ${res.status}: ${text.slice(0, 100)}`);
-        return { fetched: 0, added: 0, updated: 0, errors };
-      }
+        const url = `${apiUrl}/?${params.toString()}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS) });
 
-      const proxies = (await res.json()) as ProxyPoolProxy[];
-      if (!Array.isArray(proxies)) {
-        errors.push("Invalid response format");
-        return { fetched: 0, added: 0, updated: 0, errors };
-      }
-
-      const limitedProxies = proxies.slice(0, maxProxies);
-
-      for (const p of limitedProxies) {
-        const [host, portStr] = p.proxy.split(":");
-        const port = parseInt(portStr, 10);
-
-        if (!host || !port || isPrivateHost(host)) {
-          errors.push(`proxypool: skipped invalid/private host ${host}`);
+        if (!res.ok) {
+          errors.push(`${protocol}: HTTP ${res.status}`);
           continue;
         }
 
-        const item: FreeProxyItem = {
-          source: "proxypool",
-          host,
-          port,
-          type: "http",
-          countryCode: null,
-          qualityScore: 50,
-          latencyMs: null,
-          anonymity: null,
-          lastValidated: new Date().toISOString(),
-        };
+        const text = await res.text();
+        const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
 
-        const result = await upsertFreeProxy(item);
-        if (result.action === "created") added++;
-        else if (result.action === "updated") updated++;
+        let protocolAdded = 0;
+        for (const line of lines) {
+          if (protocolAdded >= maxProxies) break;
+
+          const [host, portStr] = line.split(":");
+          if (!host || !portStr) continue;
+
+          const port = parseInt(portStr, 10);
+          if (!port || isNaN(port) || isPrivateHost(host)) continue;
+
+          const item: FreeProxyItem = {
+            source: "proxypool",
+            host,
+            port,
+            type: protocol === "http" ? "http" : protocol as FreeProxyItem["type"],
+            countryCode: countryFilter !== "ALL" ? countryFilter : null,
+            qualityScore: 60,
+            latencyMs: null,
+            anonymity: protocol === "http" ? "anonymous" : null,
+            lastValidated: new Date().toISOString(),
+          };
+
+          const result = await upsertFreeProxy(item);
+          if (result.action === "created") added++;
+          else if (result.action === "updated") updated++;
+          if (result.action !== "skipped") fetched++;
+          protocolAdded++;
+        }
+      } catch (err) {
+        errors.push(`${protocol}: ${err instanceof Error ? err.message : String(err)}`);
       }
-
-      return { fetched: limitedProxies.length, added, updated, errors };
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
-      return { fetched: 0, added, updated, errors };
     }
+
+    return { fetched, added, updated, errors };
   }
 
   async list(filters: {
