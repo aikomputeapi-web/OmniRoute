@@ -17,7 +17,17 @@ import type { DashboardChannel, DashboardEventName } from "@/lib/events/types";
 // ── Config ────────────────────────────────────────────────────────────────
 
 const WS_RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
-const DEFAULT_WS_URL = `ws://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:20129`;
+function getDefaultWsUrl(): string {
+  if (typeof window === "undefined") return "ws://localhost:20129";
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const { hostname } = window.location;
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return `${protocol}//${hostname}:20129`;
+  }
+  return `${protocol}//${window.location.host}/live-ws`;
+}
+
+const DEFAULT_WS_URL = getDefaultWsUrl();
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -40,6 +50,8 @@ export interface DashboardConnectionState {
 export interface UseLiveDashboardOptions {
   /** WebSocket URL (default: ws://hostname:20129) */
   wsUrl?: string;
+  /** Whether the WebSocket connection should be active (default: true) */
+  enabled?: boolean;
   /** API key for authentication */
   apiKey?: string;
   /** Channels to subscribe to */
@@ -56,6 +68,7 @@ export interface UseLiveDashboardOptions {
  */
 export function useLiveDashboard({
   wsUrl = DEFAULT_WS_URL,
+  enabled = true,
   apiKey,
   channels = ["requests", "combo", "credentials"],
   autoReconnect = true,
@@ -192,6 +205,23 @@ export function useLiveDashboard({
 
   // Connect on mount and on reconnect trigger
   useEffect(() => {
+    mountedRef.current = true;
+    if (!enabled) {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      wsRef.current?.close();
+      wsRef.current = null;
+      setConnection({
+        isConnected: false,
+        isConnecting: false,
+        error: null,
+        reconnectAttempt: 0,
+      });
+      return;
+    }
+
     connect();
     return () => {
       mountedRef.current = false;
@@ -200,7 +230,7 @@ export function useLiveDashboard({
       }
       wsRef.current?.close();
     };
-  }, [connect]);
+  }, [connect, enabled]);
 
   // Connect (for manual retry)
   const reconnect = useCallback(() => {

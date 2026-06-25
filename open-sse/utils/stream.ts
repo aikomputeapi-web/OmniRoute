@@ -1545,6 +1545,26 @@ export function createSSEStream(options: StreamOptions = {}) {
                   if (Array.isArray(parsed.choices) && parsed.choices.length === 0) {
                     const emptyChoicesUsage = extractUsage(parsed) ?? parsed.usage;
                     if (hasValidUsage(emptyChoicesUsage)) {
+                      // Some upstreams (e.g. Ollama Cloud) emit prompt_tokens: 0
+                      // even when input was sent — they simply don't count input
+                      // tokens.  When we have a non-zero output but zero input,
+                      // estimate the real input token count from the request body.
+                      if (
+                        emptyChoicesUsage &&
+                        typeof emptyChoicesUsage === "object" &&
+                        !Array.isArray(emptyChoicesUsage) &&
+                        emptyChoicesUsage.completion_tokens > 0
+                      ) {
+                        const pt = emptyChoicesUsage.prompt_tokens ?? 0;
+                        if (pt === 0) {
+                          const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
+                          if (estimated?.prompt_tokens > 0) {
+                            emptyChoicesUsage.prompt_tokens = estimated.prompt_tokens;
+                            emptyChoicesUsage.total_tokens =
+                              (emptyChoicesUsage.total_tokens ?? 0) + estimated.prompt_tokens;
+                          }
+                        }
+                      }
                       usage = emptyChoicesUsage;
                       output = `data: ${JSON.stringify(parsed)}\n\n`;
                       injectedUsage = true;
@@ -1604,7 +1624,14 @@ export function createSSEStream(options: StreamOptions = {}) {
                   // clients (e.g. LobeChat) may skip content when reasoning_content
                   // is present, causing the first content token to be lost.
                   if (delta?.reasoning_content && delta?.content) {
-                    const reasoningChunk = JSON.parse(JSON.stringify(parsed));
+                    // Per-chunk clone on the streaming hot path: a JSON.parse(JSON.stringify())
+                    // round-trip re-serializes and re-parses the entire chunk just to drop two
+                    // fields. structuredClone is a native, much faster deep clone with identical
+                    // semantics for this JSON-derived object (falls back on older runtimes).
+                    const reasoningChunk =
+                      typeof structuredClone === "function"
+                        ? structuredClone(parsed)
+                        : JSON.parse(JSON.stringify(parsed));
                     const rDelta = reasoningChunk.choices[0].delta;
                     delete rDelta.content;
                     reasoningChunk.choices[0].finish_reason = null;

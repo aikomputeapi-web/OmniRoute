@@ -5,14 +5,13 @@ import { useTranslations } from "next-intl";
 import { Button, Badge, Input, Modal, Toggle } from "@/shared/components";
 import { providerAllowsOptionalApiKey, supportsBulkApiKey } from "@/shared/constants/providers";
 import { parseBulkApiKeys } from "@/shared/utils/bulkApiKeyParser";
+import { providerHasFreeModels } from "@/shared/utils/freeModels";
 import {
   isBaseUrlConfigurableProvider,
   getProviderBaseUrlDefault,
   getProviderBaseUrlHint,
   getProviderBaseUrlPlaceholder,
   isGlmProvider,
-  parseRoutingTagsInput,
-  parseExcludedModelsInput,
   getWebSessionCredentialLabel,
   getWebSessionCredentialHint,
   getWebSessionCredentialCheckLabel,
@@ -27,7 +26,8 @@ import { getWebSessionCredentialRequirement } from "../../webSessionCredentials"
 import { useOpenRouterPresetControl } from "../OpenRouterPresetInput";
 import WebSessionCredentialGuide from "../WebSessionCredentialGuide";
 import CcCompatibleRequestDefaultsFields from "./CcCompatibleRequestDefaultsFields";
-import { assignCcCompatibleRequestDefaults } from "./ccCompatibleRequestDefaults";
+import { buildAddProviderSpecificData } from "./connectionProviderSpecificData";
+import QuotaScrapingFields, { EMPTY_QUOTA_SCRAPING_FIELDS } from "./QuotaScrapingFields";
 
 export interface AddApiKeyModalProps {
   isOpen: boolean;
@@ -65,6 +65,7 @@ export default function AddApiKeyModal({
   onClose,
 }: AddApiKeyModalProps) {
   const t = useTranslations("providers");
+  const showFreeModelsToggle = providerHasFreeModels(provider);
   const usesBaseUrl = isBaseUrlConfigurableProvider(provider);
   const defaultBaseUrl = getProviderBaseUrlDefault(provider);
   const isVertex = provider === "vertex" || provider === "vertex-partner";
@@ -110,9 +111,11 @@ export default function AddApiKeyModal({
     customUserAgent: "",
     accountId: "",
     consoleApiKey: "",
+    ...EMPTY_QUOTA_SCRAPING_FIELDS,
     ccCompatibleContext1m: false,
     ccCompatibleRedactThinking: false,
     passthroughModels: false,
+    importFreeModelsOnly: false,
   });
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
@@ -280,44 +283,27 @@ export default function AddApiKeyModal({
         }
       }
 
-      const providerSpecificData: Record<string, unknown> = {};
-      if (formData.customUserAgent.trim()) {
-        providerSpecificData.customUserAgent = formData.customUserAgent.trim();
-      }
-      openRouterPreset.applyTo(providerSpecificData);
-      if (formData.routingTags.trim()) {
-        providerSpecificData.tags = parseRoutingTagsInput(formData.routingTags);
-      }
-      if (formData.excludedModels.trim()) {
-        providerSpecificData.excludedModels = parseExcludedModelsInput(formData.excludedModels);
-      }
-      if (formData.passthroughModels) {
-        providerSpecificData.passthroughModels = true;
-      }
-      if (provider === "bailian-coding-plan" && formData.consoleApiKey.trim()) {
-        providerSpecificData.consoleApiKey = formData.consoleApiKey.trim();
-      }
-      if (isGooglePse && formData.cx.trim()) {
-        providerSpecificData.cx = formData.cx.trim();
-      }
-      if (usesBaseUrl) {
-        providerSpecificData.baseUrl = validatedBaseUrl;
-      } else if (showsRegion) {
-        providerSpecificData.region = formData.region.trim() || defaultRegion;
-      } else if (isGlm) {
-        providerSpecificData.apiRegion = formData.apiRegion;
-      } else if (isCloudflare && formData.accountId.trim()) {
-        providerSpecificData.accountId = formData.accountId.trim();
-      }
-      if (isCcCompatible) assignCcCompatibleRequestDefaults(providerSpecificData, formData);
+      const providerSpecificData = buildAddProviderSpecificData({
+        provider,
+        formData,
+        openRouterPreset,
+        showFreeModelsToggle,
+        isGooglePse,
+        usesBaseUrl,
+        validatedBaseUrl,
+        showsRegion,
+        defaultRegion,
+        isGlm,
+        isCloudflare,
+        isCcCompatible,
+      });
 
       const payload = {
         name: formData.name,
         apiKey: credentialInput.trim() || undefined,
         priority: formData.priority,
         testStatus: "active",
-        providerSpecificData:
-          Object.keys(providerSpecificData).length > 0 ? providerSpecificData : undefined,
+        providerSpecificData,
       };
 
       const error = await onSave(payload);
@@ -350,6 +336,9 @@ export default function AddApiKeyModal({
         bulkProviderSpecificData.baseUrl = checked.value;
       }
       openRouterPreset.applyTo(bulkProviderSpecificData);
+      if (showFreeModelsToggle && formData.importFreeModelsOnly) {
+        bulkProviderSpecificData.importFreeModelsOnly = true;
+      }
       const providerSpecificData =
         Object.keys(bulkProviderSpecificData).length > 0 ? bulkProviderSpecificData : undefined;
 
@@ -383,6 +372,16 @@ export default function AddApiKeyModal({
   };
 
   if (!provider) return null;
+
+  const freeModelsToggle = showFreeModelsToggle ? (
+    <Toggle
+      size="sm"
+      checked={formData.importFreeModelsOnly}
+      onChange={(checked) => setFormData({ ...formData, importFreeModelsOnly: checked })}
+      label={t("importFreeModelsOnlyLabel")}
+      description={t("importFreeModelsOnlyHint")}
+    />
+  ) : null;
 
   return (
     <Modal
@@ -429,6 +428,7 @@ export default function AddApiKeyModal({
           <div className="flex flex-col gap-3">
             <p className="text-xs text-text-muted">{t("bulkAddFormatHint")}</p>
             {openRouterPreset.input}
+            {freeModelsToggle}
             <textarea
               className="w-full rounded border border-border bg-background p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary"
               placeholder={"name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named"}
@@ -689,6 +689,13 @@ export default function AddApiKeyModal({
                 {openRouterPreset.input}
               </div>
             )}
+            {freeModelsToggle}
+            <QuotaScrapingFields
+              provider={provider}
+              values={formData}
+              onChange={(patch) => setFormData({ ...formData, ...patch })}
+              t={t}
+            />
             {isCompatible && !isCcCompatible && (
               <p className="text-xs text-text-muted">
                 {isAnthropic

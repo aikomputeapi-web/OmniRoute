@@ -54,6 +54,7 @@ import {
   getAntigravityEnvelopeUserAgent,
   getAntigravitySessionId,
 } from "../services/antigravityIdentity.ts";
+import * as prl from "../utils/providerRequestLogging.ts";
 
 const MAX_RETRY_AFTER_MS = 60_000;
 const LONG_RETRY_THRESHOLD_MS = 60_000;
@@ -776,6 +777,21 @@ export class AntigravityExecutor extends BaseExecutor {
       requestType: _requestType,
       requestId: _requestId,
       request: _request,
+      // #1944: output_config (and the legacy output_format) are Anthropic/Claude-Code-only
+      // fields. Google's Cloud Code envelope rejects unknown top-level fields with a 400
+      // ("Invalid JSON payload received. Unknown name \"output_config\""), which broke every
+      // Claude model served via Antigravity. Drop them so they never reach the envelope.
+      output_config: _outputConfig,
+      output_format: _outputFormat,
+      // #1926: the unified thinking adapter can also set Claude/OpenAI-native thinking fields
+      // at the body root. Google rejects them with `400 Bad input: oneOf at '/' not met`
+      // (or `Unknown name "thinking"`), breaking every reasoning/thinking model served via
+      // Antigravity (e.g. claude-opus-4-x-thinking). Strip the whole thinking family too.
+      thinking: _thinking,
+      reasoning_effort: _reasoningEffort,
+      reasoning: _reasoning,
+      enable_thinking: _enableThinking,
+      thinking_budget: _thinkingBudget,
       ...passthroughFields
     } = normalizedBody;
 
@@ -895,11 +911,12 @@ export class AntigravityExecutor extends BaseExecutor {
   }
 
   // Parse retry time from Antigravity error message body
-  // Format: "Your quota will reset after 2h7m23s" or "1h30m" or "45m" or "30s"
+  // Format: "Your quota will reset after 2h7m23s" or "Resets in 160h27m24s" or
+  // "1h30m" or "45m" or "30s". The optional plural ("resets in") must match too (#1308).
   parseRetryFromErrorMessage(errorMessage: unknown): number | null {
     if (!errorMessage || typeof errorMessage !== "string") return null;
 
-    const match = errorMessage.match(/reset (?:after|in) (\d+h)?(\d+m)?(\d+s)?/i);
+    const match = errorMessage.match(/resets? (?:after|in) (\d+h)?(\d+m)?(\d+s)?/i);
     if (!match) return null;
 
     let totalMs = 0;
@@ -975,7 +992,17 @@ export class AntigravityExecutor extends BaseExecutor {
         const msg = err?.message || String(err);
         timedOut = msg.includes("timed out");
         log?.warn?.("SSE_COLLECT", `Error collecting SSE stream: ${msg}`);
-        // Fall through — return whatever was collected so far
+        // Cancel the stream to prevent locking the socket in Undici pool
+        try {
+          reader.releaseLock();
+        } catch (_) {}
+        try {
+          response.body?.cancel().catch(() => {});
+        } catch (_) {}
+      } finally {
+        try {
+          reader.releaseLock();
+        } catch (_) {}
       }
       processAntigravitySSEText(decoder.decode(), partialLine, collected, logger);
       flushAntigravitySSEText(partialLine, collected, logger);
@@ -1198,6 +1225,8 @@ export class AntigravityExecutor extends BaseExecutor {
           transformedBody
         );
         let finalHeaders = serializedRequest.headers;
+        const capture = (h: Record<string, string>, s: string) =>
+          prl.captureCurrentProviderBody(url, h, s, log);
         const clientProfile = applyAntigravityClientProfileHeaders(
           finalHeaders,
           credentials,
@@ -1234,6 +1263,7 @@ export class AntigravityExecutor extends BaseExecutor {
           );
         }
 
+        await capture(finalHeaders, serializedRequest.bodyString);
         let response = await fetchWithReadinessTimeout(url, {
           method: "POST",
           headers: finalHeaders,
@@ -1246,6 +1276,7 @@ export class AntigravityExecutor extends BaseExecutor {
           const retryHeaders = { ...finalHeaders };
           removeHeaderCaseInsensitive(retryHeaders, "x-goog-user-project");
           log?.debug?.("RETRY", "403 with x-goog-user-project, retrying once without it");
+          await capture(retryHeaders, serializedRequest.bodyString);
           response = await fetchWithReadinessTimeout(url, {
             method: "POST",
             headers: retryHeaders,
@@ -1328,6 +1359,7 @@ export class AntigravityExecutor extends BaseExecutor {
                 );
                 const finalCreditsHeaders = serializedCreditsRequest.headers;
                 try {
+                  await capture(finalCreditsHeaders, serializedCreditsRequest.bodyString);
                   const creditsResp = await fetchWithReadinessTimeout(url, {
                     method: "POST",
                     headers: finalCreditsHeaders,
@@ -1545,6 +1577,21 @@ export class AntigravityExecutor extends BaseExecutor {
         // that extracts remainingCredits from the final SSE chunk(s) without
         // consuming the stream. The client receives the unmodified SSE data.
         if (response.body) {
+          // If the downstream client aborts, cancel the upstream fetch body immediately
+          // to release the socket back to the Undici agent pool and prevent memory leaks.
+          if (signal) {
+            const abortHandler = () => {
+              try {
+                response.body?.cancel().catch(() => {});
+              } catch (_) {}
+            };
+            if (signal.aborted) {
+              abortHandler();
+            } else {
+              signal.addEventListener("abort", abortHandler, { once: true });
+            }
+          }
+
           let sseBuffer = "";
           const decoder = new TextDecoder(); // Singleton for correct streaming decode
           const MAX_BUFFER_SIZE = 16 * 1024; // Limit to prevent OOM on large streams

@@ -32,9 +32,8 @@ import {
 import { buildGeminiTools, sanitizeGeminiToolName } from "../helpers/geminiToolsSanitizer.ts";
 
 // Observed Antigravity wrapper output cap, not an underlying model capability.
-// Keep this bridge-local: capMaxOutputTokens() falls back to OmniRoute's generic
-// 8192 default for unknown Claude-family IDs, while Antigravity currently caps
-// visible output around 16K. See: https://github.com/keisksw/antigravity-output-analysis
+// Keep this bridge-local: Antigravity currently caps visible output around 16K.
+// See: https://github.com/keisksw/antigravity-output-analysis
 const ANTIGRAVITY_CLAUDE_MAX_OUTPUT_TOKENS = 16_384;
 
 type GeminiPart = Record<string, unknown>;
@@ -274,13 +273,12 @@ function openaiToGeminiBase(
   if (body.stop !== undefined) {
     result.generationConfig.stopSequences = Array.isArray(body.stop) ? body.stop : [body.stop];
   }
-  const requestedMaxOutputTokens = (body.max_tokens ?? body.max_completion_tokens) as
-    | number
-    | undefined;
-  if (requestedMaxOutputTokens !== undefined) {
-    result.generationConfig.maxOutputTokens = capMaxOutputTokens(model, requestedMaxOutputTokens);
-  } else {
-    result.generationConfig.maxOutputTokens = capMaxOutputTokens(model);
+  const maxOutputTokens = capMaxOutputTokens(
+    model,
+    (body.max_tokens ?? body.max_completion_tokens) as number | undefined
+  );
+  if (maxOutputTokens !== null) {
+    result.generationConfig.maxOutputTokens = maxOutputTokens;
   }
 
   // Thinking / Reasoning support (Google Gemini 2.0+ Thinking models)
@@ -305,6 +303,26 @@ function openaiToGeminiBase(
       thinkingBudget: thinking.budget_tokens,
       includeThoughts: true,
     };
+  }
+
+  // 3. Default: all modern Gemini models (2.5+) have thinking capability.
+  // If the client didn't explicitly request thinking (via reasoning_effort or
+  // thinking.type), still set includeThoughts so the upstream marks thought
+  // parts with thought:true. Without this, the model's reasoning leaks into
+  // visible content instead of being routed to reasoning_content by the
+  // response translator. (#4170)
+  if (!result.generationConfig.thinkingConfig) {
+    const modelLower = model.toLowerCase();
+    if (
+      modelLower.includes("gemini") &&
+      !modelLower.includes("gemini-1") &&
+      (!modelLower.includes("gemini-2.0") || modelLower.includes("thinking"))
+    ) {
+      result.generationConfig.thinkingConfig = {
+        thinkingBudget: getDefaultThinkingBudget(model) || capThinkingBudget(model, 24576),
+        includeThoughts: true,
+      };
+    }
   }
 
   // Build tool_call_id -> name map

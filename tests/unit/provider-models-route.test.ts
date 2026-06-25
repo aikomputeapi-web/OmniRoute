@@ -569,7 +569,7 @@ test("provider models route caches discovered opencode-go models per connection"
 
   assert.equal(firstResponse.status, 200);
   assert.equal(firstBody.source, "api");
-  assert.deepEqual(firstBody.models, [{ id: "glm-5.1", name: "GLM 5.1" }]);
+  assert.deepEqual(firstBody.models, [{ id: "glm-5.1", name: "GLM 5.1", owned_by: "opencode-go" }]);
   assert.deepEqual(cachedModels, [{ id: "glm-5.1", name: "GLM 5.1", source: "imported" }]);
 
   globalThis.fetch = async () => {
@@ -606,7 +606,9 @@ test("provider models route falls back to cached models when a refresh fails", a
   assert.equal(body.source, "cache");
   assert.match(body.warning, /cached catalog/i);
   assert.deepEqual(body.models, [{ id: "cached-go", name: "Cached Go", source: "imported" }]);
-  assert.equal(fetchCalls, 1);
+  // T39 multi-endpoint discovery probes `${base}/v1/models` then `${base}/models`
+  // before giving up; both 503 here, so it makes 2 attempts and then falls back to cache.
+  assert.equal(fetchCalls, 2);
 });
 
 test("provider models route clears cached discovery when a refresh returns no remote models", async () => {
@@ -1507,7 +1509,7 @@ test("provider models route always returns the Reka preset catalog", async () =>
   assert.equal(body.source, "local_catalog");
   assert.deepEqual(
     body.models.map((model) => model.id),
-    ["reka-flash-3", "reka-edge-2603"]
+    ["reka-flash-3", "reka-flash", "reka-edge-2603"]
   );
 });
 
@@ -1530,7 +1532,7 @@ test("provider models route returns Reka local catalog without an API key", asyn
   assert.equal(body.source, "local_catalog");
   assert.deepEqual(
     body.models.map((model) => model.id),
-    ["reka-flash-3", "reka-edge-2603"]
+    ["reka-flash-3", "reka-flash", "reka-edge-2603"]
   );
 });
 

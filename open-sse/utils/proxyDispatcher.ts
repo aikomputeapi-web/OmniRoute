@@ -7,12 +7,16 @@ import { createSocksDispatcherWithFamily } from "./socksConnectorWithFamily.ts";
 
 const DISPATCHER_CACHE_KEY = Symbol.for("omniroute.proxyDispatcher.cache");
 const DEFAULT_DISPATCHER_KEY = Symbol.for("omniroute.proxyDispatcher.default");
+const RETRY_DISPATCHER_KEY = Symbol.for("omniroute.proxyDispatcher.retry");
 const SUPPORTED_PROTOCOLS = new Set(["http:", "https:", "socks5:"]);
+const DEFAULT_PROXY_DISPATCHER_CONNECTIONS = 32;
+const MAX_PROXY_DISPATCHER_CONNECTIONS = 256;
 
 type DispatcherCache = Map<string, Dispatcher>;
 type GlobalWithDispatcherCache = typeof globalThis & {
   [DISPATCHER_CACHE_KEY]?: DispatcherCache;
   [DEFAULT_DISPATCHER_KEY]?: Dispatcher;
+  [RETRY_DISPATCHER_KEY]?: Dispatcher;
 };
 type SocksDispatcherOptions = {
   type: number;
@@ -48,6 +52,7 @@ export function clearDispatcherCache() {
 
   const globalWithCache = globalThis as GlobalWithDispatcherCache;
   delete globalWithCache[DEFAULT_DISPATCHER_KEY];
+  delete globalWithCache[RETRY_DISPATCHER_KEY];
 }
 
 function getDispatcherOptions() {
@@ -67,16 +72,70 @@ function getDispatcherOptions() {
   };
 }
 
-function getProxyDispatcherOptions() {
+export function getProxyDispatcherConnectionLimit(
+  env: Record<string, string | undefined> = process.env
+): number {
+  const raw = env.OMNIROUTE_PROXY_DISPATCHER_CONNECTIONS;
+  if (raw == null || raw.trim() === "") return DEFAULT_PROXY_DISPATCHER_CONNECTIONS;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    console.warn(
+      `[ProxyDispatcher] Invalid OMNIROUTE_PROXY_DISPATCHER_CONNECTIONS="${raw}". Using default ${DEFAULT_PROXY_DISPATCHER_CONNECTIONS}.`
+    );
+    return DEFAULT_PROXY_DISPATCHER_CONNECTIONS;
+  }
+
+  return Math.min(Math.floor(parsed), MAX_PROXY_DISPATCHER_CONNECTIONS);
+}
+
+function getProxyDispatcherOptions(env: Record<string, string | undefined> = process.env) {
   const options = getDispatcherOptions();
   // Disable keep-alive and pipelining for proxy connections.
   // Cheap proxy servers aggressively drop idle sockets without sending TCP RST,
   // causing "socket hang up" or "Client network socket disconnected" errors
   // on subsequent requests that try to reuse the pooled connection.
+  //
+  // Keep multiple connections available anyway: with pipelining disabled, long
+  // SSE streams such as Codex /v1/responses otherwise bottleneck through the
+  // cached proxy dispatcher under concurrency (#4163).
   return {
     ...options,
+    connections: getProxyDispatcherConnectionLimit(env),
     keepAliveTimeout: 1,
     keepAliveMaxTimeout: 1,
+    pipelining: 0,
+  };
+}
+
+export function getDefaultDispatcherConnectionLimit(
+  env: Record<string, string | undefined> = process.env
+): number {
+  const raw = env.OMNIROUTE_DIRECT_DISPATCHER_CONNECTIONS;
+  if (raw == null || raw.trim() === "") return DEFAULT_PROXY_DISPATCHER_CONNECTIONS;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 1) {
+    console.warn(
+      `[ProxyDispatcher] Invalid OMNIROUTE_DIRECT_DISPATCHER_CONNECTIONS="${raw}". Using default ${DEFAULT_PROXY_DISPATCHER_CONNECTIONS}.`
+    );
+    return DEFAULT_PROXY_DISPATCHER_CONNECTIONS;
+  }
+
+  return Math.min(Math.floor(parsed), MAX_PROXY_DISPATCHER_CONNECTIONS);
+}
+
+function getDefaultDispatcherOptions(env: Record<string, string | undefined> = process.env) {
+  const options = getDispatcherOptions();
+  // #4580 — On the direct egress path, undici's default pipelining (1) lets a long
+  // SSE stream monopolize the single pooled socket per origin, serializing every
+  // other concurrent request to that same provider. Mirror the proxy fix (#4288):
+  // disable pipelining and keep several connections available. Unlike the proxy
+  // path we KEEP keep-alive — the 1ms TTL there is a cheap-proxy-socket workaround,
+  // not needed (and harmful to perf) for direct connections.
+  return {
+    ...options,
+    connections: getDefaultDispatcherConnectionLimit(env),
     pipelining: 0,
   };
 }
@@ -84,9 +143,35 @@ function getProxyDispatcherOptions() {
 export function getDefaultDispatcher(): Dispatcher {
   const globalWithCache = globalThis as GlobalWithDispatcherCache;
   if (!globalWithCache[DEFAULT_DISPATCHER_KEY]) {
-    globalWithCache[DEFAULT_DISPATCHER_KEY] = new Agent(getDispatcherOptions());
+    globalWithCache[DEFAULT_DISPATCHER_KEY] = new Agent(getDefaultDispatcherOptions());
   }
   return globalWithCache[DEFAULT_DISPATCHER_KEY];
+}
+
+/**
+ * Dispatcher for RETRYING a direct request that just failed with a transient
+ * socket error (UND_ERR_SOCKET / "other side closed" / ECONNRESET).
+ *
+ * The default direct dispatcher pools keep-alive sockets for up to
+ * `fetchKeepAliveTimeoutMs` (4 s). Edges such as nvidia / opencode-zen silently
+ * close idle keep-alive sockets within that window, so the next request that
+ * reuses the pooled socket fails — and these failures arrive in bursts (#4252).
+ * Retrying on the SAME pooled dispatcher can grab ANOTHER stale socket, so the
+ * retry uses this no-keep-alive / no-pipelining dispatcher (mirroring the proxy
+ * dispatcher mitigation) to force a fresh socket. Healthy keep-alive reuse on
+ * the first attempt is preserved — only the retry pays the fresh-socket cost.
+ */
+export function getRetryDispatcher(): Dispatcher {
+  const globalWithCache = globalThis as GlobalWithDispatcherCache;
+  if (!globalWithCache[RETRY_DISPATCHER_KEY]) {
+    globalWithCache[RETRY_DISPATCHER_KEY] = new Agent({
+      ...getDispatcherOptions(),
+      keepAliveTimeout: 1,
+      keepAliveMaxTimeout: 1,
+      pipelining: 0,
+    });
+  }
+  return globalWithCache[RETRY_DISPATCHER_KEY];
 }
 
 /**
@@ -300,6 +385,19 @@ function resolveDispatcherFamily(parsed: URL): 4 | 6 | null {
 /** Test-only accessor for the resolved family. */
 export function __resolveDispatcherFamilyForTest(proxyUrl: string): 4 | 6 | null {
   return resolveDispatcherFamily(new URL(proxyUrl));
+}
+
+/** Test-only accessor for proxy dispatcher pool options. */
+export function __getProxyDispatcherOptionsForTest(
+  env: Record<string, string | undefined> = process.env
+) {
+  return getProxyDispatcherOptions(env);
+}
+
+export function __getDefaultDispatcherOptionsForTest(
+  env: Record<string, string | undefined> = process.env
+) {
+  return getDefaultDispatcherOptions(env);
 }
 
 export function createProxyDispatcher(proxyUrl: string): Dispatcher {

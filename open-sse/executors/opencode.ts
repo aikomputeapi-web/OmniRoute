@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import {
   BaseExecutor,
   setUserAgentHeader,
@@ -77,6 +78,11 @@ export class OpencodeExecutor extends BaseExecutor {
       }
 
       // Forward OpenCode request metadata headers from client
+      const findClientHeader = (name: string) =>
+        Object.entries(clientHeaders).find(
+          ([key]) => key.toLowerCase() === name.toLowerCase()
+        )?.[1];
+
       const opencodeHeaderKeys = [
         "x-opencode-session",
         "x-opencode-request",
@@ -84,11 +90,39 @@ export class OpencodeExecutor extends BaseExecutor {
         "x-opencode-client",
       ];
       for (const headerName of opencodeHeaderKeys) {
-        const value = Object.entries(clientHeaders).find(
-          ([key]) => key.toLowerCase() === headerName.toLowerCase()
-        )?.[1];
+        const value = findClientHeader(headerName);
         if (value) {
           headers[headerName] = value;
+        }
+      }
+
+      // #4022: OpenCode CLI only emits x-opencode-* headers when the provider id
+      // starts with "opencode". For a custom-named provider (e.g. "omniroute") it
+      // instead sends x-session-affinity / X-Session-Id, which both carry the same
+      // OpenCode sessionID. Map that session id onto x-opencode-session so session
+      // continuity to the opencode.ai upstream works regardless of how the user
+      // named the provider. Scoped to this executor (opencode.ai/zen upstreams
+      // only) — the generic DefaultExecutor intentionally does NOT do this, to
+      // avoid leaking the client session id to arbitrary third-party upstreams.
+      if (!headers["x-opencode-session"]) {
+        const sessionAffinity =
+          findClientHeader("x-session-affinity") || findClientHeader("x-session-id");
+        if (sessionAffinity) {
+          headers["x-opencode-session"] = sessionAffinity;
+
+          // #4465: a custom-named provider only reaches this fallback because the
+          // OpenCode CLI did NOT emit the x-opencode-* set (it only does so when the
+          // provider id starts with "opencode"). It therefore also dropped
+          // x-opencode-request, a per-request correlation id. Synthesize one so these
+          // users are not disadvantaged versus opencode-prefixed providers on the
+          // opencode.ai upstream. x-opencode-client / x-opencode-project are NOT
+          // fabricated: their valid values are opencode-internal and inventing them
+          // could be rejected upstream — they remain forward-only above. Scoped to this
+          // executor (opencode.ai/zen) and only to the fallback path, so the direct
+          // OpenCode CLI flow (which controls its own request id) is untouched.
+          if (!headers["x-opencode-request"]) {
+            headers["x-opencode-request"] = randomUUID();
+          }
         }
       }
     }
@@ -112,6 +146,21 @@ export class OpencodeExecutor extends BaseExecutor {
       modifiedBody.tools.length > 128
     ) {
       modifiedBody.tools = modifiedBody.tools.slice(0, 128);
+    }
+    if (modifiedBody && typeof modifiedBody === "object" && !Array.isArray(modifiedBody)) {
+      const mb = modifiedBody as Record<string, unknown>;
+      const m = String(model || "");
+      const effortLevels = ["low", "medium", "high", "max"] as const;
+      const matchedLevel = effortLevels.find((level) => m.endsWith(`-${level}`));
+      if (matchedLevel) {
+        const base = m.slice(0, -matchedLevel.length - 1);
+        if (base.toLowerCase() === "deepseek-v4-pro") {
+          mb.model = "deepseek-v4-pro";
+          if (mb.reasoning_effort === undefined) {
+            mb.reasoning_effort = matchedLevel;
+          }
+        }
+      }
     }
     return modifiedBody;
   }

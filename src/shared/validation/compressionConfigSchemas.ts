@@ -33,6 +33,13 @@ export const cavemanOutputModeSchema = z
   })
   .strict();
 
+export const outputStyleSelectionSchema = z
+  .object({
+    id: z.string().trim().min(1),
+    level: cavemanIntensitySchema,
+  })
+  .strict();
+
 export const rtkConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -49,6 +56,26 @@ export const rtkConfigSchema = z
     trustProjectFilters: z.boolean().optional(),
     rawOutputRetention: rtkRawOutputRetentionSchema.optional(),
     rawOutputMaxBytes: z.number().int().min(1024).max(10_000_000).optional(),
+    enableGrouping: z.boolean().optional(),
+    groupingThreshold: z.number().int().min(2).max(100).optional(),
+    stripCodeComments: z.boolean().optional(),
+    preserveDocstrings: z.boolean().optional(),
+  })
+  .strict();
+
+// mcpAccessibility tunes how the MCP server trims oversized tool outputs before returning them.
+// The schema only enforces structural validity (positive integers / booleans); the numeric floors
+// (e.g. maxTextChars below the truncation-tail reserve) are owned by clampMcpAccessibilityConfig
+// on the write path, which folds out-of-range values back to the safe defaults. All fields are
+// optional so the settings sub-route can apply a partial merge over the current config.
+export const mcpAccessibilityConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    maxTextChars: z.number().int().min(1).optional(),
+    collapseThreshold: z.number().int().min(1).optional(),
+    collapseKeepHead: z.number().int().min(0).optional(),
+    collapseKeepTail: z.number().int().min(0).optional(),
+    minLengthToProcess: z.number().int().min(1).optional(),
   })
   .strict();
 
@@ -60,6 +87,15 @@ export const languageConfigSchema = z
     enabledPacks: z.array(z.string().trim().min(1)).optional(),
   })
   .strict();
+
+// Context Editing is a provider-delegated compression mode (Claude/Anthropic only):
+// the provider clears old tool-use blocks server-side. This config only carries the
+// on/off flag; the request-time header/body injection is a separate slice.
+export const contextEditingConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+  })
+  .strip();
 
 export const aggressiveConfigSchema = z
   .object({
@@ -141,6 +177,11 @@ export const stackedPipelineStepSchema = z.discriminatedUnion("engine", [
     .strict(),
 ]);
 
+export const engineToggleSchema = z.object({
+  enabled: z.boolean(),
+  level: z.string().optional(),
+});
+
 export const compressionSettingsUpdateSchema = z
   .object({
     enabled: z.boolean().optional(),
@@ -155,10 +196,17 @@ export const compressionSettingsUpdateSchema = z
     stackedPipeline: z.array(stackedPipelineStepSchema).optional(),
     cavemanConfig: cavemanConfigSchema.optional(),
     cavemanOutputMode: cavemanOutputModeSchema.optional(),
+    outputStyles: z.array(outputStyleSelectionSchema).optional(),
     rtkConfig: rtkConfigSchema.optional(),
     languageConfig: languageConfigSchema.optional(),
     aggressive: aggressiveConfigSchema.optional(),
     ultra: ultraConfigSchema.optional(),
+    contextEditing: contextEditingConfigSchema.optional(),
+    engines: z.record(z.string(), engineToggleSchema).optional(),
+    enginesExplicit: z.boolean().optional(),
+    activeComboId: z.string().nullable().optional(),
+    ultraEngine: z.enum(["heuristic", "slm"]).optional(),
+    ultraSlmPrewarm: z.boolean().optional(),
   })
   .strict();
 

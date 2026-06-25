@@ -1,4 +1,5 @@
 import { DEFAULT_API_LIMITS, PROVIDER_PROFILES } from "@omniroute/open-sse/config/constants";
+import { resolveFeatureFlag } from "@/shared/utils/featureFlags";
 
 type JsonRecord = Record<string, unknown>;
 type AuthCategory = "oauth" | "apikey";
@@ -65,6 +66,14 @@ export interface ProviderCooldownSettings {
 
 export interface QuotaPreflightSettings {
   /**
+   * Master switch for the auto-routing quota cutoff (buildAutoCandidates). When
+   * disabled (default), candidates are NOT dropped for low quota before scoring —
+   * the soft quota penalty + connection cooldown still apply, so behavior is
+   * unchanged. Opt-in because the hard cutoff interacts with the auto-routing
+   * scorer and must be validated per deployment. Default: false.
+   */
+  enabled: boolean;
+  /**
    * Global minimum-remaining cutoff (percent, 0-100). A connection is skipped
    * when its remaining quota drops to this value or below. Matches the
    * dashboard's quota bars (which show REMAINING %, not used %), so the
@@ -90,6 +99,27 @@ export interface QuotaPreflightSettings {
   providerWindowDefaults: Record<string, Record<string, number>>;
 }
 
+export interface StreamRecoverySettings {
+  /**
+   * Opt-in transparent recovery of truncated upstream streams (free-claude-code port).
+   * When enabled, the opening SSE window is briefly held (see STREAM_RECOVERY in
+   * open-sse/config/constants.ts) so an early cutoff can be retried before any byte
+   * reaches the client. OFF by default because holding the window adds up to
+   * STREAM_RECOVERY.HOLDBACK_MS of time-to-first-token latency on every stream.
+   * Default seeds from the STREAM_RECOVERY_ENABLED feature flag / env var.
+   */
+  enabled: boolean;
+  /**
+   * Opt-in mid-stream continuation (Fase 4.4): when an upstream stream truncates AFTER
+   * bytes already reached the client, re-request with the partial text as an assistant
+   * prefill and stitch the missing suffix (plain-text OpenAI-compatible streams only;
+   * never with a tool call in flight). OFF by default because the recovered tail arrives
+   * as one burst rather than token-by-token. Default seeds from the
+   * STREAM_RECOVERY_MIDSTREAM_ENABLED feature flag / env var.
+   */
+  continueMidStream: boolean;
+}
+
 export interface ResilienceSettings {
   requestQueue: RequestQueueSettings;
   connectionCooldown: Record<AuthCategory, ConnectionCooldownProfileSettings>;
@@ -97,6 +127,7 @@ export interface ResilienceSettings {
   waitForCooldown: WaitForCooldownSettings;
   providerCooldown: ProviderCooldownSettings;
   quotaPreflight: QuotaPreflightSettings;
+  streamRecovery: StreamRecoverySettings;
 }
 
 export interface ResilienceSettingsPatch {
@@ -106,6 +137,7 @@ export interface ResilienceSettingsPatch {
   waitForCooldown?: Partial<WaitForCooldownSettings>;
   providerCooldown?: Partial<ProviderCooldownSettings>;
   quotaPreflight?: Partial<QuotaPreflightSettings>;
+  streamRecovery?: Partial<StreamRecoverySettings>;
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -135,6 +167,40 @@ function toInteger(
 
 function toBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function parseFeatureFlagBoolean(value: string, fallback: boolean): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+  return fallback;
+}
+
+function resolveBooleanFeatureFlag(key: string, fallback: boolean): boolean {
+  try {
+    return parseFeatureFlagBoolean(resolveFeatureFlag(key), fallback);
+  } catch (error) {
+    const envValue = process.env[key];
+    if (typeof envValue === "string" && envValue.trim() !== "") {
+      return parseFeatureFlagBoolean(envValue, fallback);
+    }
+    console.error(
+      `[resilience] Failed to resolve ${key}, falling back to ${String(fallback)}:`,
+      error instanceof Error ? error.message : error
+    );
+    return fallback;
+  }
+}
+
+function resolveStreamRecoveryDefaults(): StreamRecoverySettings {
+  return {
+    enabled: resolveBooleanFeatureFlag("STREAM_RECOVERY_ENABLED", false),
+    continueMidStream: resolveBooleanFeatureFlag("STREAM_RECOVERY_MIDSTREAM_ENABLED", false),
+  };
 }
 
 export const DEFAULT_REQUEST_QUEUE_MAX_WAIT_MS = (() => {
@@ -192,6 +258,13 @@ export const DEFAULT_RESILIENCE_SETTINGS: ResilienceSettings = {
     ),
   },
   quotaPreflight: {
+    // Opt-in (default OFF): the auto-routing hard cutoff drops low-quota candidates
+    // before scoring, overlapping the existing soft quota penalty + connection
+    // cooldown, so it must be explicitly enabled by the operator until its
+    // interaction with the scorer is validated in production.
+    enabled: ["true", "1", "on"].includes(
+      (process.env.QUOTA_PREFLIGHT_CUTOFF_ENABLED || "").trim().toLowerCase()
+    ),
     // Remaining-% semantics. 2 = "stop when only 2% remaining" (= 98% used).
     // Uniform across all providers and windows; operators set per-window
     // overrides per connection via the Cutoff modal in Dashboard › Limits,
@@ -200,6 +273,18 @@ export const DEFAULT_RESILIENCE_SETTINGS: ResilienceSettings = {
     defaultThresholdPercent: 2,
     warnThresholdPercent: 20,
     providerWindowDefaults: {},
+  },
+  streamRecovery: {
+    // Opt-in (default OFF): the holdback that powers transparent early-retry adds
+    // up to STREAM_RECOVERY.HOLDBACK_MS of time-to-first-token latency on every
+    // streaming request, so it must be explicitly enabled by the operator.
+    enabled: ["true", "1", "on"].includes(
+      (process.env.STREAM_RECOVERY_ENABLED || "").trim().toLowerCase()
+    ),
+    // Opt-in (default OFF): mid-stream continuation re-requests after a post-commit cut.
+    continueMidStream: ["true", "1", "on"].includes(
+      (process.env.STREAM_RECOVERY_MIDSTREAM_ENABLED || "").trim().toLowerCase()
+    ),
   },
 };
 
@@ -393,7 +478,8 @@ function normalizeQuotaPreflightSettings(
     record.providerWindowDefaults,
     fallback.providerWindowDefaults
   );
-  return { defaultThresholdPercent, warnThresholdPercent, providerWindowDefaults };
+  const enabled = typeof record.enabled === "boolean" ? record.enabled : fallback.enabled;
+  return { enabled, defaultThresholdPercent, warnThresholdPercent, providerWindowDefaults };
 }
 
 function normalizeWaitForCooldownSettings(
@@ -435,9 +521,21 @@ function normalizeProviderCooldownSettings(
   return { enabled, minRetryCooldownMs, maxRetryCooldownMs };
 }
 
+function normalizeStreamRecoverySettings(
+  next: unknown,
+  fallback: StreamRecoverySettings
+): StreamRecoverySettings {
+  const record = asRecord(next);
+  return {
+    enabled: toBoolean(record.enabled, fallback.enabled),
+    continueMidStream: toBoolean(record.continueMidStream, fallback.continueMidStream),
+  };
+}
+
 function buildLegacyFallback(settings: JsonRecord): ResilienceSettings {
   const profiles = asRecord(settings.providerProfiles);
   const defaults = asRecord(settings.rateLimitDefaults);
+  const streamRecoveryDefaults = resolveStreamRecoveryDefaults();
 
   const oauthLegacy = asRecord(profiles.oauth);
   const apikeyLegacy = asRecord(profiles.apikey);
@@ -521,6 +619,7 @@ function buildLegacyFallback(settings: JsonRecord): ResilienceSettings {
     },
     providerCooldown: DEFAULT_RESILIENCE_SETTINGS.providerCooldown,
     quotaPreflight: DEFAULT_RESILIENCE_SETTINGS.quotaPreflight,
+    streamRecovery: streamRecoveryDefaults,
   };
 }
 
@@ -565,6 +664,10 @@ export function resolveResilienceSettings(
       current.quotaPreflight,
       fallback.quotaPreflight
     ),
+    streamRecovery: normalizeStreamRecoverySettings(
+      current.streamRecovery,
+      fallback.streamRecovery
+    ),
   };
 }
 
@@ -603,6 +706,7 @@ export function mergeResilienceSettings(
       current.providerCooldown
     ),
     quotaPreflight: normalizeQuotaPreflightSettings(updates.quotaPreflight, current.quotaPreflight),
+    streamRecovery: normalizeStreamRecoverySettings(updates.streamRecovery, current.streamRecovery),
   };
 }
 

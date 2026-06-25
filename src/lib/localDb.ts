@@ -21,6 +21,7 @@ export {
   // Provider Nodes
   getProviderNodes,
   getProviderNodeById,
+  resolveProviderNodeForConnection,
   createProviderNode,
   updateProviderNode,
   deleteProviderNode,
@@ -43,6 +44,7 @@ export {
   getModelAliases,
   setModelAlias,
   deleteModelAlias,
+  deleteModelAliasesForProvider,
 
   // MITM Alias
   getMitmAlias,
@@ -63,6 +65,7 @@ export {
   getModelUpstreamExtraHeaders,
   getModelIsHidden,
   setModelIsHidden,
+  getHiddenModelsByProvider,
 
   // Synced Available Models
   getSyncedAvailableModels,
@@ -88,6 +91,7 @@ export {
 
 export * from "./db/compressionCacheStats";
 export * from "./db/compressionCombos";
+export * from "./db/compressionRunTelemetry";
 
 export {
   // API Keys
@@ -202,6 +206,7 @@ export {
   getDbBackupMaxFiles,
   setDbBackupMaxFiles,
   getDbBackupRetentionDays,
+  setDbBackupRetentionDays,
   listDbBackups,
   restoreDbBackup,
   // Export-All / Import helpers (#3500 slice 5)

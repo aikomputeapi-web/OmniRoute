@@ -97,13 +97,12 @@ test.after(() => {
 // ---------------------------------------------------------------------------
 
 test("#3500 buildUnifiedSource — raw-only branch when sinceIso is recent", () => {
-  // A very recent sinceIso means no aggregated rows are needed
-  const recentIso = new Date(Date.now() - 3600_000).toISOString(); // 1 hour ago
-  const today = new Date().toISOString().split("T")[0];
+  // sinceIso >= rawCutoffDate means no aggregated rows are needed.
+  const recentIso = "2025-06-02T12:00:00.000Z";
   const result = mod.buildUnifiedSource({
     sinceIso: recentIso,
     untilIso: null,
-    rawCutoffDate: today,
+    rawCutoffDate: "2025-06-01",
     apiKeyWhere: "",
     apiKeyParams: {},
   });
@@ -113,6 +112,21 @@ test("#3500 buildUnifiedSource — raw-only branch when sinceIso is recent", () 
   assert.ok(!result.unifiedSource.includes("daily_usage_summary"), "no agg table needed");
   assert.ok(result.unifiedSource.includes("@since"), "has @since param");
   assert.ok("since" in result.unifiedParams, "unifiedParams has since key");
+});
+
+test("#3500 buildUnifiedSource — raw-only branch for same cutoff date ISO", () => {
+  const rawCutoffDate = "2026-06-21";
+  const result = mod.buildUnifiedSource({
+    sinceIso: "2026-06-21T01:00:00.000Z",
+    untilIso: null,
+    rawCutoffDate,
+    apiKeyWhere: "",
+    apiKeyParams: {},
+  });
+
+  assert.ok(!result.unifiedSource.includes("daily_usage_summary"), "no same-day agg table");
+  assert.equal(result.unifiedParams.since, "2026-06-21T01:00:00.000Z");
+  assert.ok(!("rawCutoffDate" in result.unifiedParams), "rawCutoffDate not needed");
 });
 
 // ---------------------------------------------------------------------------

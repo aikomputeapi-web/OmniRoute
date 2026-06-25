@@ -14,6 +14,7 @@ import {
   normalizeAntigravityClientProfileSetting,
 } from "@/shared/constants/antigravityClientProfile";
 import { parseExtraApiKeys } from "@/shared/utils/parseApiKeys";
+import { providerHasFreeModels } from "@/shared/utils/freeModels";
 import { maskEmail } from "@/shared/utils/maskEmail";
 import useEmailPrivacyStore from "@/store/emailPrivacyStore";
 import { useNotificationStore } from "@/store/notificationStore";
@@ -48,7 +49,8 @@ import { getWebSessionCredentialRequirement } from "../../webSessionCredentials"
 import { useOpenRouterPresetControl } from "../OpenRouterPresetInput";
 import WebSessionCredentialGuide from "../WebSessionCredentialGuide";
 import CcCompatibleRequestDefaultsFields from "./CcCompatibleRequestDefaultsFields";
-import { mergeCcCompatibleRequestDefaults } from "./ccCompatibleRequestDefaults";
+import { assignEditApiKeyProviderSpecificData } from "./connectionProviderSpecificData";
+import QuotaScrapingFields, { EMPTY_QUOTA_SCRAPING_FIELDS } from "./QuotaScrapingFields";
 
 export interface EditConnectionModalConnection {
   id?: string;
@@ -70,6 +72,8 @@ export interface EditConnectionModalProps {
   connection: EditConnectionModalConnection | null;
   providerId: string;
   onSave: (data: unknown) => Promise<void | unknown>;
+  /** Triggered after a successful save when the "import only free models" flag changed. */
+  onResyncModels?: (connectionId: string) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -80,11 +84,13 @@ export default function EditConnectionModal({
   connection,
   providerId,
   onSave,
+  onResyncModels,
   onClose,
 }: EditConnectionModalProps) {
   const t = useTranslations("providers");
   const notify = useNotificationStore();
   const provider = connection?.provider || providerId;
+  const showFreeModelsToggle = providerHasFreeModels(provider);
   const [formData, setFormData] = useState({
     name: "",
     priority: 1,
@@ -110,6 +116,7 @@ export default function EditConnectionModal({
     codexServiceTier: "default" as CodexServiceTier,
     codexOpenaiStoreEnabled: false,
     consoleApiKey: "",
+    ...EMPTY_QUOTA_SCRAPING_FIELDS,
     ccCompatibleContext1m: false,
     ccCompatibleRedactThinking: false,
     cloudCodeProjectId: "",
@@ -120,6 +127,7 @@ export default function EditConnectionModal({
         : false,
     passthroughModels: connection?.providerSpecificData?.passthroughModels === true,
     disableCooling: connection?.providerSpecificData?.disableCooling === true,
+    importFreeModelsOnly: connection?.providerSpecificData?.importFreeModelsOnly === true,
   });
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
@@ -212,6 +220,10 @@ export default function EditConnectionModal({
       const existingOpenRouterPreset = stringField(connection.providerSpecificData?.preset);
       const existingCx = stringField(connection.providerSpecificData?.cx);
       const existingAccountId = stringField(connection.providerSpecificData?.accountId);
+      const existingOpenCodeGoWorkspaceId =
+        stringField(connection.providerSpecificData?.opencodeGoWorkspaceId) ||
+        stringField(connection.providerSpecificData?.openCodeGoWorkspaceId) ||
+        stringField(connection.providerSpecificData?.workspaceId);
       const codexRequestDefaults = getCodexRequestDefaults(connection.providerSpecificData);
       const ccRequestDefaults = getClaudeCodeCompatibleRequestDefaults(
         connection.providerSpecificData
@@ -263,6 +275,9 @@ export default function EditConnectionModal({
         codexServiceTier: codexRequestDefaults.serviceTier ?? "default",
         codexOpenaiStoreEnabled: connection.providerSpecificData?.openaiStoreEnabled === true,
         consoleApiKey: existingConsoleApiKey,
+        opencodeGoWorkspaceId: existingOpenCodeGoWorkspaceId,
+        opencodeGoAuthCookie: "",
+        ollamaCloudUsageCookie: "",
         ccCompatibleContext1m: ccRequestDefaults.context1m,
         ccCompatibleRedactThinking: ccRequestDefaults.redactThinking,
         cloudCodeProjectId:
@@ -276,6 +291,7 @@ export default function EditConnectionModal({
         ),
         passthroughModels: connection?.providerSpecificData?.passthroughModels === true,
         disableCooling: connection?.providerSpecificData?.disableCooling === true,
+        importFreeModelsOnly: connection?.providerSpecificData?.importFreeModelsOnly === true,
       });
       const existing = connection.providerSpecificData?.extraApiKeys;
       setExtraApiKeys(Array.isArray(existing) ? existing : []);
@@ -475,45 +491,24 @@ export default function EditConnectionModal({
       if (!isOAuth) {
         updates.providerSpecificData = {
           ...(connection.providerSpecificData || {}),
-          extraApiKeys: extraApiKeys.filter((k) => k.trim().length > 0),
-          tag: formData.tag.trim() || undefined,
-          tags: parseRoutingTagsInput(formData.routingTags),
-          excludedModels: parseExcludedModelsInput(formData.excludedModels),
-          customUserAgent: formData.customUserAgent.trim(),
-          ...openRouterPreset.getPatch(),
-          ...(formData.passthroughModels ? { passthroughModels: true } : {}),
         };
-        if (provider === "bailian-coding-plan") {
-          if (formData.consoleApiKey.trim()) {
-            updates.providerSpecificData.consoleApiKey = formData.consoleApiKey.trim();
-          } else {
-            updates.providerSpecificData.consoleApiKey = undefined;
-          }
-        }
-        if (formData.validationModelId) {
-          updates.providerSpecificData.validationModelId = formData.validationModelId;
-        }
-        if (isGooglePse) {
-          updates.providerSpecificData.cx = formData.cx.trim() || undefined;
-        }
-        if (usesBaseUrl) {
-          updates.providerSpecificData.baseUrl = validatedBaseUrl;
-        } else if (showsRegion) {
-          updates.providerSpecificData.region = formData.region.trim() || defaultRegion;
-        } else if (isGlm) {
-          updates.providerSpecificData.apiRegion = formData.apiRegion;
-        } else if (isCloudflare && formData.accountId.trim()) {
-          updates.providerSpecificData.accountId = formData.accountId.trim();
-        }
-        if (supportsGoogleProjectId) {
-          updates.providerSpecificData.projectId = trimmedCloudCodeProjectId || null;
-        }
-        if (isCcCompatible) {
-          updates.providerSpecificData.requestDefaults = mergeCcCompatibleRequestDefaults(
-            updates.providerSpecificData.requestDefaults,
-            formData
-          );
-        }
+        assignEditApiKeyProviderSpecificData({
+          provider,
+          formData,
+          target: updates.providerSpecificData,
+          extraApiKeys,
+          openRouterPreset,
+          usesBaseUrl,
+          validatedBaseUrl,
+          showsRegion,
+          defaultRegion,
+          isGlm,
+          isCloudflare,
+          supportsGoogleProjectId,
+          trimmedCloudCodeProjectId,
+          isGooglePse,
+          isCcCompatible,
+        });
       } else {
         updates.providerSpecificData = {
           ...(connection.providerSpecificData || {}),
@@ -550,9 +545,24 @@ export default function EditConnectionModal({
       if (updates.providerSpecificData) {
         updates.providerSpecificData.disableCooling = formData.disableCooling ? true : undefined;
       }
+      const freeOnlyChanged =
+        showFreeModelsToggle &&
+        formData.importFreeModelsOnly !==
+          (connection.providerSpecificData?.importFreeModelsOnly === true);
+      if (showFreeModelsToggle && updates.providerSpecificData) {
+        // Store an explicit boolean (not undefined): the PUT route merges
+        // { ...existing, ...incoming }, so an undefined/omitted key would keep the
+        // previously-saved `true` and unchecking would never take effect.
+        updates.providerSpecificData.importFreeModelsOnly = formData.importFreeModelsOnly === true;
+      }
       const error = (await onSave(updates)) as void | unknown;
       if (error) {
         setSaveError(typeof error === "string" ? error : t("failedSaveConnection"));
+        return;
+      }
+      // Re-sync so the available model list reflects the new free-only choice.
+      if (freeOnlyChanged && onResyncModels && connection.id) {
+        await onResyncModels(connection.id);
       }
     } finally {
       setSaving(false);
@@ -658,6 +668,14 @@ export default function EditConnectionModal({
           </div>
         )}
         <div className="flex flex-col gap-4 rounded-lg border border-border/50 bg-surface/20 p-4">
+          {showFreeModelsToggle && (
+            <Toggle
+              checked={formData.importFreeModelsOnly}
+              onChange={(checked) => setFormData({ ...formData, importFreeModelsOnly: checked })}
+              label={t("importFreeModelsOnlyLabel")}
+              description={t("importFreeModelsOnlyHint")}
+            />
+          )}
           <Toggle
             checked={formData.disableCooling}
             onChange={(checked) => setFormData({ ...formData, disableCooling: checked })}
@@ -665,6 +683,13 @@ export default function EditConnectionModal({
             description={t("disableCoolingDescription")}
           />
         </div>
+        <QuotaScrapingFields
+          provider={provider}
+          values={formData}
+          onChange={(patch) => setFormData({ ...formData, ...patch })}
+          t={t}
+          editMode
+        />
         {supportsGoogleProjectId && (
           <div className="flex flex-col gap-4 rounded-lg border border-border/50 bg-surface/20 p-4">
             {isAntigravity && (
@@ -988,10 +1013,9 @@ export default function EditConnectionModal({
                 return (
                   <div className="flex items-center gap-2">
                     <span
-                      className={`flex-1 font-mono text-xs bg-sidebar/50 px-3 py-2 rounded border border-border truncate ${statusColor}`}
+                      className={`flex-1 min-w-0 break-all font-mono text-xs bg-sidebar/50 px-3 py-2 rounded border border-border ${statusColor}`}
                     >
-                      {statusIcon} {t("primaryKey")}: {connection.apiKey.slice(0, 6)}...
-                      {connection.apiKey.slice(-4)}
+                      {statusIcon} {t("primaryKey")}: {connection.apiKey}
                     </span>
                     {health && (
                       <span
