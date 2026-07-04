@@ -413,7 +413,9 @@ interface ContentChunk {
 // (older builds used names merely containing "markdown"). All converge on the
 // same answer, so we lock onto a single primary usage to avoid double-counting.
 function isAnswerTextUsage(usage: string): boolean {
-  return usage === "ask_text" || /^ask_text_\d+_markdown$/.test(usage) || usage.includes("markdown");
+  return (
+    usage === "ask_text" || /^ask_text_\d+_markdown$/.test(usage) || usage.includes("markdown")
+  );
 }
 
 // Reconstructed state for one answer-text block, built up from diff patches

@@ -428,6 +428,7 @@ export default function CompatibleModelsSection({
                   key={`${providerStorageAlias}:${modelId}`}
                   modelId={modelId}
                   fullModel={fullModel}
+                  alias={alias}
                   source={source}
                   isFree={isFree}
                   isHidden={isHidden}
@@ -440,6 +441,7 @@ export default function CompatibleModelsSection({
                         ? () => onDeleteAlias(alias)
                         : undefined
                   }
+                  onSetAlias={(a) => onSetAlias(modelId, a, providerStorageAlias)}
                   t={t}
                   showDeveloperToggle={!isAnthropic}
                   effectiveModelNormalize={effectiveModelNormalize}

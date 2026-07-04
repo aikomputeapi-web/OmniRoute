@@ -181,8 +181,6 @@ export const KNOWN_TRANSLATOR_PAIRS: readonly string[] = [
   "claude:gemini",
   "claude:openai",
   "cursor:openai",
-  "gemini-cli:claude",
-  "gemini-cli:openai",
   "gemini:claude",
   "gemini:openai",
   "kiro:openai",
@@ -191,7 +189,6 @@ export const KNOWN_TRANSLATOR_PAIRS: readonly string[] = [
   "openai:claude",
   "openai:cursor",
   "openai:gemini",
-  "openai:gemini-cli",
   "openai:kiro",
   "openai:openai-responses",
 ];
@@ -468,8 +465,14 @@ async function main(): Promise<void> {
   }
 
   // ── (2) Combo strategies ──────────────────────────────────────────────────
+  // Canonical = user-facing ROUTING_STRATEGY_VALUES ∪ INTERNAL_ROUTING_STRATEGY_VALUES
+  // (system-only strategies like "quota-share" are registered but hidden from the UI;
+  // they still must have a real dispatch branch in combo.ts — enforced below).
   const strategiesMod = await import("@/shared/constants/routingStrategies.ts");
-  const canonical = strategiesMod.ROUTING_STRATEGY_VALUES as readonly string[];
+  const canonical = [
+    ...(strategiesMod.ROUTING_STRATEGY_VALUES as readonly string[]),
+    ...(strategiesMod.INTERNAL_ROUTING_STRATEGY_VALUES as readonly string[]),
+  ];
   const comboSource = readFileSync(resolvePath(REPO_ROOT, "open-sse/services/combo.ts"), "utf8");
   const handled = extractHandledStrategies(comboSource);
 

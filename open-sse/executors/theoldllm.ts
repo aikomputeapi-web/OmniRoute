@@ -5,7 +5,7 @@ const API_BASE = "https://theoldllm.vercel.app";
 const API_PATH = "/api/chatgpt";
 const API_URL = `${API_BASE}${API_PATH}`;
 const CHROME_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 
 // ── Model name mapping ────────────────────────────────────────────────────
 

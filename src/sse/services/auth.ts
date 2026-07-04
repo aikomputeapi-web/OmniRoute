@@ -19,6 +19,7 @@ import {
   getQuotaWindowStatus,
   isAccountQuotaExhausted,
 } from "@/domain/quotaCache";
+import { getQuotaScopeLabelForProvider } from "@omniroute/open-sse/services/antigravityQuotaFamily.ts";
 import {
   isAccountUnavailable,
   getUnavailableUntil,
@@ -62,6 +63,7 @@ import {
 } from "@/shared/constants/providers";
 import { isModelExcludedByConnection } from "@/domain/connectionModelRules";
 import { isNoAuthProviderBlockedBySettings } from "./noAuthProviderSettings";
+import { resolveAccountProxiesFromRegistry } from "./noAuthProxyResolution";
 import * as log from "../utils/logger";
 import { fisherYatesShuffle, getNextFromDeckSync } from "@/shared/utils/shuffleDeck";
 
@@ -80,6 +82,7 @@ interface ProviderConnectionView {
   tokenExpiresAt: string | null;
   expiresAt: string | null;
   projectId: string | null;
+  defaultModel: string | null;
   providerSpecificData: JsonRecord;
   lastUsedAt: string | null;
   consecutiveUseCount: number;
@@ -127,6 +130,10 @@ const MIN_QUOTA_THRESHOLD_PERCENT = 1;
 const MAX_QUOTA_THRESHOLD_PERCENT = 100;
 const USER_PLAN_CACHE_TTL_MS = 5 * 60 * 1000;
 const NON_RETRYABLE_MODEL_LOCKOUT_REASONS = new Set(["not_found", "not_found_local"]);
+// Antigravity Gemini family 429 with no parseable upstream hint: seed the backoff at
+// this base. Real upstream Retry-After hints still win — they flow through
+// `exactCooldownMs` (usedUpstreamRetryHint), not this base. (#5222)
+const ANTIGRAVITY_FAMILY_INFERRED_BASE_COOLDOWN_MS = 30_000;
 
 const userPlanCache = new Map<string, { timestamp: number; value: UserPlan | null }>();
 
@@ -176,6 +183,7 @@ function toProviderConnection(value: unknown): ProviderConnectionView {
     tokenExpiresAt: toStringOrNull(row.tokenExpiresAt),
     expiresAt: toStringOrNull(row.expiresAt),
     projectId: toStringOrNull(row.projectId),
+    defaultModel: toStringOrNull(row.defaultModel),
     providerSpecificData: asRecord(row.providerSpecificData),
     lastUsedAt: toStringOrNull(row.lastUsedAt),
     consecutiveUseCount: toNumber(row.consecutiveUseCount, 0),
@@ -786,14 +794,15 @@ type AnonymousFallbackProviderDefinition = {
   noAuth?: boolean;
 };
 
-function buildSyntheticNoAuthCredentials(): {
+function buildSyntheticNoAuthCredentials(providerSpecificData: JsonRecord = {}): {
   apiKey: null;
   accessToken: null;
   refreshToken: null;
   expiresAt: null;
   projectId: null;
+  defaultModel: null;
   copilotToken: null;
-  providerSpecificData: Record<string, never>;
+  providerSpecificData: JsonRecord;
   connectionId: typeof SYNTHETIC_NOAUTH_CONNECTION_ID;
   testStatus: "active";
   lastError: null;
@@ -813,8 +822,9 @@ function buildSyntheticNoAuthCredentials(): {
     refreshToken: null,
     expiresAt: null,
     projectId: null,
+    defaultModel: null,
     copilotToken: null,
-    providerSpecificData: {},
+    providerSpecificData,
     connectionId: SYNTHETIC_NOAUTH_CONNECTION_ID,
     testStatus: "active",
     lastError: null,
@@ -826,10 +836,41 @@ function buildSyntheticNoAuthCredentials(): {
   };
 }
 
+/**
+ * #4954 / #5217 (Gap 1) — no-auth providers persist a connection row whose
+ * `providerSpecificData` carries `fingerprints` + `accountProxies`. Hydrate those
+ * and resolve by-id Proxy Pool references to live records (./noAuthProxyResolution)
+ * so the executor gets a resolved inline `proxy`. Best-effort: failures → empty.
+ */
+async function loadNoAuthProviderSpecificData(providerId: string): Promise<JsonRecord> {
+  try {
+    const connectionsRaw = await getProviderConnections({ provider: providerId });
+    const connections = (Array.isArray(connectionsRaw) ? connectionsRaw : []).map(
+      toProviderConnection
+    );
+    const hydrated: JsonRecord = {};
+    for (const conn of connections) {
+      const psd = conn.providerSpecificData;
+      if (!psd || typeof psd !== "object") continue;
+      if (Array.isArray(psd.fingerprints) && !Array.isArray(hydrated.fingerprints)) {
+        hydrated.fingerprints = psd.fingerprints;
+      }
+      if (Array.isArray(psd.accountProxies) && !Array.isArray(hydrated.accountProxies)) {
+        hydrated.accountProxies = psd.accountProxies;
+      }
+    }
+    if (Array.isArray(hydrated.accountProxies)) {
+      hydrated.accountProxies = await resolveAccountProxiesFromRegistry(hydrated.accountProxies);
+    }
+    return hydrated;
+  } catch {
+    return {};
+  }
+}
+
 function providerCanUseSyntheticNoAuthFallback(providerId: string): boolean {
   const providerDef = getProviderById(providerId) as
-    | AnonymousFallbackProviderDefinition
-    | undefined;
+    AnonymousFallbackProviderDefinition | undefined;
   const noAuthProviderDef = (
     NOAUTH_PROVIDERS as Record<string, AnonymousFallbackProviderDefinition | undefined>
   )[providerId];
@@ -843,10 +884,16 @@ function providerCanUseSyntheticNoAuthFallback(providerId: string): boolean {
   );
 }
 
-function maybeSyntheticNoAuthFallback(providerId: string, excludedConnectionIds: Set<string>) {
+async function maybeSyntheticNoAuthFallback(
+  providerId: string,
+  excludedConnectionIds: Set<string>
+) {
   if (!providerCanUseSyntheticNoAuthFallback(providerId)) return null;
   if (excludedConnectionIds.has(SYNTHETIC_NOAUTH_CONNECTION_ID)) return null;
-  return buildSyntheticNoAuthCredentials();
+  // #4954: hydrate per-account proxy/rotation config off the connection row so
+  // no-auth executors (opencode, mimocode) actually honor configured proxies.
+  const providerSpecificData = await loadNoAuthProviderSpecificData(providerId);
+  return buildSyntheticNoAuthCredentials(providerSpecificData);
 }
 
 function normalizeExcludedConnectionIds(
@@ -868,6 +915,14 @@ function normalizeExcludedConnectionIds(
   }
 
   return normalized;
+}
+
+function formatConnectionPrefixesForLog(ids: Iterable<string>, max = 6): string {
+  const prefixes = Array.from(ids)
+    .filter((id) => typeof id === "string" && id.length > 0)
+    .slice(0, max)
+    .map((id) => `${id.slice(0, 8)}...`);
+  return prefixes.length > 0 ? prefixes.join(",") : "none";
 }
 
 function buildQuotaPreflightRateLimitedResult(
@@ -1032,7 +1087,7 @@ export async function getProviderCredentials(
         excludeConnectionId,
         options.excludeConnectionIds
       );
-      return maybeSyntheticNoAuthFallback(resolvedId, excludedForNoAuth);
+      return await maybeSyntheticNoAuthFallback(resolvedId, excludedForNoAuth);
     }
 
     const allowSuppressedConnections = options.allowSuppressedConnections === true;
@@ -1065,12 +1120,29 @@ export async function getProviderCredentials(
     if (forcedConnectionId) {
       connections = connections.filter((conn) => conn.id === forcedConnectionId);
     }
+    const activeConnectionsCount = connections.length;
+    const rawConnectionsCount = connectionsRaw.length;
+    const blockedByForcedConnection = forcedConnectionId
+      ? rawConnectionsCount - connections.length
+      : 0;
+    const blockedByAllowedConnections =
+      allowedConnections && allowedConnections.length > 0
+        ? Math.max(0, rawConnectionsCount - connections.length - blockedByForcedConnection)
+        : 0;
+    const forcedIdForLog = forcedConnectionId ? `${forcedConnectionId.slice(0, 8)}...` : "none";
+
     log.debug(
       "AUTH",
-      `${provider} | total connections: ${connections.length}, excludeIds: ${
-        excludedConnectionIds.size > 0 ? Array.from(excludedConnectionIds).join(",") : "none"
-      }, forcedId: ${forcedConnectionId || "none"}`
+      `${provider} | active=${activeConnectionsCount}, excluded=${excludedConnectionIds.size} (${formatConnectionPrefixesForLog(excludedConnectionIds)}), forcedId=${forcedIdForLog}, blocked_forced=${blockedByForcedConnection}, blocked_allowed=${blockedByAllowedConnections}`
     );
+    if (provider === "antigravity" && (forcedConnectionId || allowedConnections?.length)) {
+      const reasons: string[] = [];
+      if (forcedConnectionId) reasons.push(`forcedConnectionId kept ${connections.length}`);
+      if (allowedConnections?.length) {
+        reasons.push(`allowedConnections=${allowedConnections.length}`);
+      }
+      log.info("AUTH", `${provider} selection constrained: ${reasons.join(", ")}`);
+    }
 
     if (connections.length === 0) {
       // Check all connections (including inactive) to see if rate limited
@@ -1117,7 +1189,10 @@ export async function getProviderCredentials(
         // the dashboard sees a misleading "bad_request" code.
         const terminalConnections = allConnections.filter(isTerminalConnectionStatus);
         if (terminalConnections.length === allConnections.length) {
-          const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+          const syntheticFallback = await maybeSyntheticNoAuthFallback(
+            resolvedId,
+            excludedConnectionIds
+          );
           if (syntheticFallback) return syntheticFallback;
 
           const statusCounts = new Map<string, number>();
@@ -1134,7 +1209,10 @@ export async function getProviderCredentials(
           };
         }
       }
-      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+      const syntheticFallback = await maybeSyntheticNoAuthFallback(
+        resolvedId,
+        excludedConnectionIds
+      );
       if (syntheticFallback) return syntheticFallback;
       log.warn("AUTH", `No credentials for ${provider}`);
       return null;
@@ -1163,6 +1241,8 @@ export async function getProviderCredentials(
       }
     }
 
+    let modelLockedCount = 0;
+    let familyLockedCount = 0;
     // Filter out unavailable accounts and excluded connection
     const availableConnections = connections.filter((c) => {
       if (excludedConnectionIds.has(c.id)) return false;
@@ -1173,8 +1253,18 @@ export async function getProviderCredentials(
         if (!allowRateLimitedConnections && isAccountUnavailable(c.rateLimitedUntil)) return false;
         if (isTerminalConnectionStatus(c)) return false;
         if (provider === "codex" && isCodexScopeUnavailable(c, requestedModel)) return false;
-        // Per-model lockout: if this specific model is locked on this connection, skip it
-        if (requestedModel && isModelLocked(provider, c.id, requestedModel)) return false;
+        // Per-model lockout: if this specific model/family is locked on this connection, skip it
+        if (requestedModel && isModelLocked(provider, c.id, requestedModel)) {
+          if (
+            provider === "antigravity" &&
+            getQuotaScopeLabelForProvider(provider, requestedModel) === "family"
+          ) {
+            familyLockedCount += 1;
+          } else {
+            modelLockedCount += 1;
+          }
+          return false;
+        }
       }
       return true;
     });
@@ -1183,6 +1273,12 @@ export async function getProviderCredentials(
       "AUTH",
       `${provider} | available: ${availableConnections.length}/${connections.length}`
     );
+    if (provider === "antigravity") {
+      log.info(
+        "AUTH",
+        `${provider} selection candidates model=${requestedModel || "none"}: active=${activeConnectionsCount}, excluded=${excludedConnectionIds.size}, modelLocked=${modelLockedCount}, familyLocked=${familyLockedCount}, eligible=${availableConnections.length}`
+      );
+    }
     connections.forEach((c) => {
       const excluded = excludedConnectionIds.has(c.id);
       const rateLimited = isAccountUnavailable(c.rateLimitedUntil);
@@ -1305,7 +1401,10 @@ export async function getProviderCredentials(
           cooldownModel: allBlockedByModelCooldown ? requestedModel : null,
         };
       }
-      const syntheticFallback = maybeSyntheticNoAuthFallback(resolvedId, excludedConnectionIds);
+      const syntheticFallback = await maybeSyntheticNoAuthFallback(
+        resolvedId,
+        excludedConnectionIds
+      );
       if (syntheticFallback) return syntheticFallback;
       log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
       return null;
@@ -1429,9 +1528,9 @@ export async function getProviderCredentials(
     } else if (strategy === "round-robin") {
       const stickyLimit = toNumber((settings as Record<string, unknown>).stickyRoundRobinLimit, 3);
 
-      // If excluding an account (fallback scenario), skip sticky logic and go straight to LRU
-      // This prevents the system from getting stuck on a failed account
-      const isFallbackScenario = excludeConnectionId !== null;
+      // If excluding account(s) (fallback scenario), skip sticky logic and go straight to LRU.
+      // This prevents same-model retries from getting stuck on a failed account.
+      const isFallbackScenario = excludeConnectionId !== null || excludedConnectionIds.size > 0;
 
       if (!isFallbackScenario) {
         // Sort by lastUsed (most recent first) to find current candidate
@@ -1501,7 +1600,7 @@ export async function getProviderCredentials(
         connection = sortedByOldest[0];
         log.info(
           "AUTH",
-          `${provider} round-robin: FALLBACK MODE - excluded ${excludeConnectionId?.slice(0, 8)}..., picked LRU ${connection.id?.slice(0, 8)}...`
+          `${provider} round-robin: FALLBACK MODE - excluded_count=${excludedConnectionIds.size} excluded=${formatConnectionPrefixesForLog(excludedConnectionIds)} picked_lru=${connection.id?.slice(0, 8)}...`
         );
 
         // Update lastUsedAt and reset count to 1 (await to ensure persistence)
@@ -1559,9 +1658,15 @@ export async function getProviderCredentials(
       connection = orderedConnections[0];
     }
 
+    if (provider === "antigravity" && connection) {
+      log.info(
+        "AUTH",
+        `${provider} selected account=${connection.id?.slice(0, 8)}... eligible=${orderedConnections.length} excluded=${excludedConnectionIds.size}`
+      );
+    }
+
     const apiKeyHealth = connection.providerSpecificData?.apiKeyHealth as
-      | Record<string, KeyHealth>
-      | undefined;
+      Record<string, KeyHealth> | undefined;
     if (apiKeyHealth) {
       syncHealthFromDB(connection.id, apiKeyHealth);
     }
@@ -1572,6 +1677,10 @@ export async function getProviderCredentials(
       refreshToken: connection.refreshToken,
       expiresAt: connection.tokenExpiresAt || connection.expiresAt || null,
       projectId: connection.projectId,
+      // #474: surface the connection's configured defaultModel so the chat /
+      // embeddings handlers can resolve a bare model name (e.g. an alias that
+      // resolved to "auto") to a real provider model ID before the upstream call.
+      defaultModel: connection.defaultModel || null,
       copilotToken:
         typeof connection.providerSpecificData.copilotToken === "string"
           ? connection.providerSpecificData.copilotToken
@@ -1818,14 +1927,20 @@ export async function markAccountUnavailable(
     // If this connection was ALREADY marked unavailable by a prior concurrent
     // request (within the mutex window), skip re-marking to avoid resetting
     // the cooldown timer or double-incrementing the backoff level.
-    if (conn?.rateLimitedUntil && new Date(conn.rateLimitedUntil).getTime() > Date.now()) {
+    // Uses cooldownUntilMs (not a raw `new Date()`) because `rate_limited_until`
+    // can hold a numeric-epoch string (e.g. the Antigravity full-quota path) —
+    // see #3954.
+    const existingCooldownMs = conn?.rateLimitedUntil
+      ? cooldownUntilMs(conn.rateLimitedUntil)
+      : NaN;
+    if (Number.isFinite(existingCooldownMs) && existingCooldownMs > Date.now()) {
       log.info(
         "AUTH",
-        `${connectionId.slice(0, 8)} already marked unavailable (until ${conn.rateLimitedUntil}), skipping duplicate mark`
+        `${connectionId.slice(0, 8)} already marked unavailable (until ${conn?.rateLimitedUntil}), skipping duplicate mark`
       );
       return {
         shouldFallback: true,
-        cooldownMs: new Date(conn.rateLimitedUntil).getTime() - Date.now(),
+        cooldownMs: existingCooldownMs - Date.now(),
       };
     }
 
@@ -1867,8 +1982,7 @@ export async function markAccountUnavailable(
     // Read passthroughModels from connection config (user-configured per-model quota)
     const connProviderSpecificData = (conn?.providerSpecificData as Record<string, unknown>) || {};
     const connectionPassthroughModels = connProviderSpecificData.passthroughModels as
-      | boolean
-      | undefined;
+      boolean | undefined;
     // #2997: per-connection opt-out of the TRANSIENT connection cooldown. When set,
     // a recoverable failure records lastError/backoff but does NOT cool the
     // connection, so getProviderCredentials keeps selecting it. Terminal states
@@ -1880,6 +1994,7 @@ export async function markAccountUnavailable(
     const disableCooling = connProviderSpecificData.disableCooling === true;
 
     const isPerModelQuotaProvider = hasPerModelQuota(provider, model, connectionPassthroughModels);
+    const modelLockoutOptions = { maxCooldownMs: effectiveProviderProfile?.maxCooldownMs };
     if (
       isPerModelQuotaProvider &&
       provider &&
@@ -1895,6 +2010,11 @@ export async function markAccountUnavailable(
             : status === 429
               ? "rate_limited"
               : "server_error";
+      const quotaScope = getQuotaScopeLabelForProvider(provider, model);
+      const antigravityFamilyInferredBaseCooldownMs =
+        provider === "antigravity" && quotaScope === "family" && status === 429
+          ? ANTIGRAVITY_FAMILY_INFERRED_BASE_COOLDOWN_MS
+          : null;
       const lockout = recordModelLockoutFailure(
         provider,
         connectionId,
@@ -1903,11 +2023,17 @@ export async function markAccountUnavailable(
         status,
         status === 404
           ? (effectiveProviderProfile?.baseCooldownMs ?? COOLDOWN_MS.notFoundLocal)
-          : (fallbackResult.baseCooldownMs ?? effectiveProviderProfile?.baseCooldownMs ?? 0),
+          : (antigravityFamilyInferredBaseCooldownMs ??
+              fallbackResult.baseCooldownMs ??
+              effectiveProviderProfile?.baseCooldownMs ??
+              0),
         effectiveProviderProfile,
         {
+          ...modelLockoutOptions,
           exactCooldownMs:
-            fallbackResult.usedUpstreamRetryHint === true ? fallbackResult.cooldownMs : null,
+            fallbackResult.usedUpstreamRetryHint === true
+              ? fallbackResult.cooldownMs
+              : (fallbackResult.quotaResetHintMs ?? null),
           maxCooldownMs: mlSettings.maxCooldownMs,
         }
       );
@@ -1961,16 +2087,6 @@ export async function markAccountUnavailable(
     const cooldownMs = terminalStatus ? 0 : rawCooldownMs;
 
     // ── #3027: per-model subscription/permission 403 → model-only lockout ──
-    // Passthrough / per-model-quota providers (e.g. ollama-cloud with
-    // passthroughModels:true) multiplex many upstream models behind one key.
-    // A scoped 403 like "this model requires a subscription, upgrade for access"
-    // is about the paid model, not the key — cooling the whole connection would
-    // knock out the free models on the same key too and escalate backoff
-    // (#3001/#3027). This generalizes the grok-web 403 precedent above to every
-    // hasPerModelQuota provider. Terminal/credential 403s (banned/deactivated
-    // key, credits exhausted) are excluded here because
-    // resolveTerminalConnectionStatus() returns a non-null status for them, so
-    // they keep their existing connection-level cooldown/deactivation path.
     if (isPerModelQuotaProvider && status === 403 && provider && model && !terminalStatus) {
       const lockout = recordModelLockoutFailure(
         provider,
@@ -1983,6 +2099,7 @@ export async function markAccountUnavailable(
           COOLDOWN_MS.serviceUnavailable,
         effectiveProviderProfile,
         {
+          ...modelLockoutOptions,
           exactCooldownMs:
             fallbackResult.usedUpstreamRetryHint === true ? fallbackResult.cooldownMs : null,
           maxCooldownMs: mlSettings.maxCooldownMs,
@@ -2006,8 +2123,7 @@ export async function markAccountUnavailable(
     // doesn't exist or isn't available for this account — it should NOT lock
     // out the entire connection.
     const connBaseUrl = (conn?.providerSpecificData as Record<string, unknown>)?.baseUrl as
-      | string
-      | undefined;
+      string | undefined;
 
     if (isLocalProvider(connBaseUrl) && status === 404 && provider && model) {
       const lockout = recordModelLockoutFailure(

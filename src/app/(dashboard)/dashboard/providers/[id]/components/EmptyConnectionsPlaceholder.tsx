@@ -24,6 +24,7 @@ interface EmptyConnectionsPlaceholderProps {
   onOpenImportCodex: () => void;
   onOpenImportClaude: () => void;
   onOpenImportGemini: () => void;
+  onOpenImportGrokCli: () => void;
   t: ProviderMessageTranslator;
 }
 
@@ -42,6 +43,7 @@ export default function EmptyConnectionsPlaceholder({
   onOpenImportCodex,
   onOpenImportClaude,
   onOpenImportGemini,
+  onOpenImportGrokCli,
   t,
 }: EmptyConnectionsPlaceholderProps) {
   return (
@@ -106,15 +108,13 @@ export default function EmptyConnectionsPlaceholder({
                     : "Import auth"}
                 </Button>
               )}
-              {providerId === "gemini-cli" && (
+              {providerId === "grok-cli" && (
                 <Button
                   variant="secondary"
                   icon="upload_file"
-                  onClick={() => gateConnectionFlow(onOpenImportGemini)}
+                  onClick={() => gateConnectionFlow(onOpenImportGrokCli)}
                 >
-                  {typeof t.has === "function" && t.has("importGeminiAuth")
-                    ? t("importGeminiAuth")
-                    : "Import auth"}
+                  Import auth
                 </Button>
               )}
             </>

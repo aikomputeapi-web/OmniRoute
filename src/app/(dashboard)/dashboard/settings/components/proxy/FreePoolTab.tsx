@@ -121,14 +121,27 @@ export default function FreePoolTab() {
 
   const handleSync = async () => {
     setSyncing(true);
+    setSyncErrors(null);
     try {
       const enabledSources = ALL_SOURCE_IDS.filter((s) => !disabledSources.has(s));
       const body = enabledSources.length < ALL_SOURCE_IDS.length ? { sources: enabledSources } : {};
-      await fetch("/api/settings/free-proxies/sync", {
+      const res = await fetch("/api/settings/free-proxies/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      // #5595: surface per-source errors the route already returns so a
+      // partial/empty sync explains itself instead of silently showing "Total: 0".
+      const data = await res.json().catch(() => null);
+      if (data?.results) {
+        const errs: Record<string, string[]> = {};
+        for (const [src, r] of Object.entries(
+          data.results as Record<string, { errors?: string[] }>
+        )) {
+          if (Array.isArray(r?.errors) && r.errors.length > 0) errs[src] = r.errors;
+        }
+        if (Object.keys(errs).length > 0) setSyncErrors(errs);
+      }
       await loadData();
     } catch {}
     setSyncing(false);
@@ -194,7 +207,11 @@ export default function FreePoolTab() {
       const res = await fetch(`/api/settings/free-proxies/${id}/add-to-pool`, {
         method: "POST",
       });
-      if (res.ok) {
+      // #4878: gate on the parsed body, not just res.ok. The route used to return
+      // a default 200 with { success:false } on a failed connectivity probe, which
+      // flipped the row to "In Pool" optimistically even though nothing was added.
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
         setProxies((prev) => prev.map((p) => (p.id === id ? { ...p, inPool: true } : p)));
       }
     } catch {}
@@ -363,6 +380,20 @@ export default function FreePoolTab() {
           <pre ref={logPreRef} className="font-mono text-xs overflow-auto bg-black text-emerald-400 p-3 h-64 shadow-inner whitespace-pre-wrap select-text scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
             {logs || (scraperError ? "" : "No log activity recorded yet. Run a scrape to begin.")}
           </pre>
+        </div>
+      )}
+
+      {syncErrors && (
+        <div
+          className="text-xs text-red-500 flex flex-col gap-1"
+          role="alert"
+          data-testid="free-pool-sync-errors"
+        >
+          {Object.entries(syncErrors).map(([src, errs]) => (
+            <span key={src}>
+              {src}: {errs.join("; ")}
+            </span>
+          ))}
         </div>
       )}
 

@@ -69,6 +69,28 @@ test("GET /v1/providers/:provider/models accepts anthropic-compatible connection
   }
 });
 
+test("GET /v1/providers/:provider/models returns synced embedded service models", async () => {
+  serviceModelsDb.saveServiceModels("cliproxyapi", [
+    { id: "cli/gpt-5", name: "GPT-5 via CLIProxyAPI" },
+    { id: "old-model" },
+  ]);
+  serviceModelsDb.saveServiceModels("cliproxyapi", [
+    { id: "cli/gpt-5", name: "GPT-5 via CLIProxyAPI" },
+  ]);
+
+  const res = await callGET("cliproxyapi");
+  const body = await res.json();
+
+  assert.equal(res.status, 200);
+  assert.equal(body.object, "list");
+  assert.deepEqual(
+    body.data.map((model: any) => model.id),
+    ["cli/gpt-5"]
+  );
+  assert.equal(body.data[0].owned_by, "cliproxyapi");
+  assert.equal(body.data[0].parent, null);
+});
+
 test("GET /v1/providers/:provider/models rejects non-matching connection-like strings", async () => {
   // Looks like a connection ID but with wrong prefix
   const res = await callGET("custom-compatible-chat-a1b2c3d4-e5f6-7890-abcd-ef1234567890");

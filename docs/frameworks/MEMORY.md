@@ -211,7 +211,13 @@ chronological order if the FTS table is missing or the FTS query throws.
 ### Optional: Qdrant (vector store tier 2)
 
 `src/lib/memory/qdrant.ts` implements an optional Qdrant integration as tier 2
-vector store. Enabled via `qdrantEnabled` in settings / toggle in Engine tab.
+vector store. Retrieval only routes to Qdrant when the engine selector
+`memoryVectorStore === "qdrant"` — the default `"auto"` (and `"sqlite-vec"`)
+**never** select Qdrant. The Engine-tab toggle sets **both** `qdrantEnabled` and
+`memoryVectorStore` together: enabling makes Qdrant the primary store, disabling
+resets to `"auto"` (#5597 — before that fix, enabling was inert because nothing
+wrote the engine selector). If Qdrant is unreachable or returns nothing, retrieval
+falls back to sqlite-vec → FTS5.
 
 - `upsertSemanticMemoryPoint()` — embed `key + content` with the configured
   embedding model, ensure the collection exists (creates cosine-distance

@@ -1,3 +1,9 @@
+/**
+ * tests/integration/live-gemini-workload.test.ts
+ *
+ * Streaming live Gemini workload test. Reuses shared generators from
+ * liveGeminiShared.ts. For non-streaming, see live-gemini-nonstream.test.ts.
+ */
 import test from "node:test";
 import assert from "node:assert/strict";
 

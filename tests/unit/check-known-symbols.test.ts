@@ -96,7 +96,6 @@ test("extractExecutorAliases parses quoted and bare keys from the executors lite
     'import { Foo } from "./foo.ts";',
     "const executors = {",
     "  antigravity: new Foo(),",
-    '  "gemini-cli": new Foo(),',
     "  agy: new Foo(), // Alias",
     '  "amazon-q": new Foo("amazon-q"),',
     "};",

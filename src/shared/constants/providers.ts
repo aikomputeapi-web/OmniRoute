@@ -24,6 +24,17 @@ export interface ProviderRiskNoticeFields {
   isEmbeddedService?: boolean;
 }
 
+import { NOAUTH_PROVIDERS } from "./providers/noauth";
+import { OAUTH_PROVIDERS } from "./providers/oauth";
+import { WEB_COOKIE_PROVIDERS } from "./providers/web-cookie";
+import { APIKEY_PROVIDERS } from "./providers/apikey";
+import { LOCAL_PROVIDERS } from "./providers/local";
+import { SEARCH_PROVIDERS } from "./providers/search";
+import { AUDIO_ONLY_PROVIDERS } from "./providers/audio";
+import { UPSTREAM_PROXY_PROVIDERS } from "./providers/upstream-proxy";
+import { CLOUD_AGENT_PROVIDERS } from "./providers/cloud-agent";
+import { SYSTEM_PROVIDERS } from "./providers/system";
+
 export const FREE_PROVIDERS = {};
 
 // No-auth Providers
@@ -113,206 +124,6 @@ export const FREE_APIKEY_PROVIDER_IDS = new Set(["qoder", "opencode"]);
 export function supportsApiKeyOnFreeProvider(providerId: unknown): boolean {
   return typeof providerId === "string" && FREE_APIKEY_PROVIDER_IDS.has(providerId);
 }
-
-// OAuth Providers
-export const OAUTH_PROVIDERS = {
-  qoder: {
-    id: "qoder",
-    alias: "if",
-    name: "Qoder AI",
-    icon: "water_drop",
-    color: "#6366F1",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-    hasFree: true,
-  },
-  qwen: {
-    id: "qwen",
-    alias: "qw",
-    name: "Qwen Code",
-    icon: "psychology",
-    color: "#10B981",
-    subscriptionRisk: true,
-    riskNoticeVariant: "deprecated",
-    deprecated: true,
-    deprecationReason:
-      "Qwen OAuth free tier was discontinued on 2026-04-15. Use 'bailian-coding-plan', 'alibaba', 'alibaba-cn', or 'openrouter' provider with API key instead.",
-  },
-  "gemini-cli": {
-    id: "gemini-cli",
-    alias: "gemini-cli",
-    name: "Gemini CLI",
-    icon: "terminal",
-    color: "#4285F4",
-    subscriptionRisk: true,
-    riskNoticeVariant: "deprecated",
-    hasFree: true,
-    authHint:
-      "Uses Gemini CLI OAuth / Cloud Code credentials. Pro models require an eligible Google account or paid plan.",
-  },
-  agy: {
-    id: "agy",
-    alias: "agy",
-    name: "Antigravity CLI",
-    icon: "terminal",
-    color: "#F59E0B",
-    textIcon: "AGY",
-    website: "https://antigravity.google",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-    hasFree: true,
-    authHint:
-      "Import your Antigravity CLI (`agy`) login (paste/upload its token file), auto-detect a local CLI login, or sign in with Google. Shares the Antigravity backend (incl. Claude models).",
-  },
-  kiro: {
-    id: "kiro",
-    alias: "kr",
-    name: "Kiro AI",
-    icon: "psychology_alt",
-    color: "#FF6B35",
-    subscriptionRisk: true,
-    riskNoticeVariant: "deprecated",
-    hasFree: true,
-    freeNote:
-      "Free tier: 50 credits/month (~25K–100K tokens). ⚠️ Kiro ToS prohibits third-party proxy/harness use.",
-  },
-  "amazon-q": {
-    id: "amazon-q",
-    alias: "aq",
-    name: "Amazon Q",
-    icon: "cloud",
-    color: "#FF9900",
-    textIcon: "AQ",
-    website: "https://aws.amazon.com/q/developer/",
-    hasFree: true,
-    authHint:
-      "Uses the same AWS Builder ID or imported refresh-token flow as Kiro, but keeps Amazon Q connections separate.",
-  },
-  claude: {
-    id: "claude",
-    alias: "cc",
-    name: "Claude Code",
-    icon: "smart_toy",
-    color: "#D97757",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-  },
-  antigravity: {
-    id: "antigravity",
-    alias: undefined,
-    name: "Antigravity",
-    icon: "rocket_launch",
-    color: "#F59E0B",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-  },
-  codex: {
-    id: "codex",
-    alias: "cx",
-    name: "OpenAI Codex",
-    icon: "code",
-    color: "#3B82F6",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-  },
-  github: { id: "github", alias: "gh", name: "GitHub Copilot", icon: "code", color: "#333333" },
-  "gitlab-duo": {
-    id: "gitlab-duo",
-    alias: "gitlab-duo",
-    name: "GitLab Duo",
-    icon: "hub",
-    color: "#FC6D26",
-    textIcon: "GL",
-    website: "https://docs.gitlab.com/user/duo_agent_platform/code_suggestions/",
-    authHint:
-      "OAuth application with ai_features + read_user scopes. Configure GITLAB_DUO_OAUTH_CLIENT_ID and optionally GITLAB_DUO_OAUTH_CLIENT_SECRET on this OmniRoute instance.",
-  },
-  cursor: {
-    id: "cursor",
-    alias: "cu",
-    name: "Cursor IDE",
-    icon: "edit_note",
-    color: "#00D4AA",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-  },
-  zed: {
-    id: "zed",
-    alias: "zd",
-    name: "Zed IDE",
-    icon: "code",
-    color: "#084CCF",
-    textIcon: "ZD",
-    website: "https://zed.dev",
-    authHint:
-      "Zed stores LLM provider credentials (OpenAI, Anthropic, Google, Mistral, xAI) in the OS keychain. Use the Import button below to discover and import them automatically.",
-  },
-  trae: {
-    id: "trae",
-    alias: "tr",
-    name: "Trae",
-    icon: "edit_square",
-    color: "#FF7849",
-    textIcon: "TR",
-    website: "https://trae.ai",
-    authHint:
-      "Trae is an AI-native IDE by ByteDance (SOLO remote agent). Authorize via trae.ai in the popup, or sign in at solo.trae.ai and paste the Cloud-IDE-JWT (sent as 'Authorization: Cloud-IDE-JWT <token>', ~14-day lifetime) as the access token; web_id/biz_user_id/user_unique_id/scope/tenant/region propagate via providerSpecificData. No headless refresh for pasted tokens — re-paste on expiry.",
-  },
-  "kimi-coding": {
-    id: "kimi-coding",
-    alias: "kmc",
-    name: "Kimi Coding",
-    icon: "psychology",
-    color: "#1E40AF",
-    textIcon: "KC",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-  },
-  kilocode: {
-    id: "kilocode",
-    alias: "kc",
-    name: "Kilo Code",
-    icon: "code",
-    color: "#FF6B35",
-    textIcon: "KC",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-  },
-  cline: {
-    id: "cline",
-    alias: "cl",
-    name: "Cline",
-    icon: "smart_toy",
-    color: "#5B9BD5",
-    textIcon: "CL",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-  },
-  windsurf: {
-    id: "windsurf",
-    alias: "ws",
-    name: "Windsurf (Devin CLI)",
-    icon: "air",
-    color: "#00C5A0",
-    textIcon: "WS",
-    subscriptionRisk: true,
-    riskNoticeVariant: "oauth",
-    authHint:
-      'In the Windsurf / VS Code IDE, open the command palette and run `Windsurf: Provide Auth Token` (or click the Jupyter "Get Windsurf Authentication Token" button), then copy the shown token and paste it here. Note: opening windsurf.com/show-auth-token directly only renders a "Redirecting" page — the IDE must initiate the flow (it adds a `?state=...` param) for the token to appear.',
-    website: "https://windsurf.com",
-  },
-  "devin-cli": {
-    id: "devin-cli",
-    alias: "dv",
-    name: "Devin CLI (Official)",
-    icon: "terminal",
-    color: "#6366F1",
-    textIcon: "DV",
-    authHint:
-      "Requires the Devin CLI binary. Run `devin auth login` to authenticate, or provide your WINDSURF_API_KEY. Install: https://cli.devin.ai",
-    website: "https://cli.devin.ai",
-  },
-};
 
 // Web / Cookie Providers
 export const WEB_COOKIE_PROVIDERS = {
@@ -2560,196 +2371,8 @@ export const LOCAL_PROVIDERS = {
 };
 
 // Search Providers
-export const SEARCH_PROVIDERS = {
-  "perplexity-search": {
-    id: "perplexity-search",
-    alias: "pplx-search",
-    name: "Perplexity Search",
-    icon: "search",
-    color: "#20808D",
-    textIcon: "PS",
-    website: "https://docs.perplexity.ai/guides/search-quickstart",
-    authHint: "Same API key as Perplexity (pplx-...)",
-  },
-  "serper-search": {
-    id: "serper-search",
-    alias: "serper-search",
-    name: "Serper Search",
-    icon: "search",
-    color: "#4285F4",
-    textIcon: "SP",
-    website: "https://serper.dev",
-    hasFree: true,
-    authHint: "API key from serper.dev dashboard",
-    serviceKinds: ["webSearch"],
-  },
-  "brave-search": {
-    id: "brave-search",
-    alias: "brave-search",
-    name: "Brave Search",
-    icon: "travel_explore",
-    color: "#FB542B",
-    textIcon: "BR",
-    website: "https://brave.com/search/api",
-    hasFree: true,
-    authHint: "Subscription token from Brave Search API dashboard",
-  },
-  "exa-search": {
-    id: "exa-search",
-    alias: "exa-search",
-    name: "Exa Search",
-    icon: "neurology",
-    color: "#1E40AF",
-    textIcon: "EX",
-    website: "https://exa.ai",
-    hasFree: true,
-    authHint: "API key from dashboard.exa.ai",
-    serviceKinds: ["webSearch", "webFetch"],
-  },
-  "tavily-search": {
-    id: "tavily-search",
-    alias: "tavily-search",
-    name: "Tavily Search",
-    icon: "manage_search",
-    color: "#5B4FDB",
-    textIcon: "TV",
-    website: "https://tavily.com",
-    hasFree: true,
-    authHint: "API key from app.tavily.com (format: tvly-...)",
-    serviceKinds: ["webSearch", "webFetch"],
-  },
-  "google-pse-search": {
-    id: "google-pse-search",
-    alias: "google-pse",
-    name: "Google Programmable Search",
-    icon: "travel_explore",
-    color: "#4285F4",
-    textIcon: "GP",
-    website: "https://developers.google.com/custom-search/v1/overview",
-    authHint: "Requires a Google API key and your Programmable Search Engine ID (cx)",
-  },
-  "linkup-search": {
-    id: "linkup-search",
-    alias: "linkup",
-    name: "Linkup Search",
-    icon: "public",
-    color: "#0F766E",
-    textIcon: "LU",
-    website: "https://docs.linkup.so",
-    authHint: "Bearer API key from the Linkup dashboard",
-  },
-  "searchapi-search": {
-    id: "searchapi-search",
-    alias: "searchapi",
-    name: "SearchAPI",
-    icon: "manage_search",
-    color: "#2563EB",
-    textIcon: "SA",
-    website: "https://www.searchapi.io/docs",
-    authHint: "API key from SearchAPI (query param or Bearer auth)",
-  },
-  "youcom-search": {
-    id: "youcom-search",
-    alias: "youcom-search",
-    name: "You.com Search",
-    icon: "travel_explore",
-    color: "#2563EB",
-    textIcon: "YOU",
-    website: "https://you.com/docs/search/overview",
-    authHint: "X-API-Key from the You.com platform dashboard",
-  },
-  "searxng-search": {
-    id: "searxng-search",
-    alias: "searxng",
-    name: "SearXNG Search",
-    icon: "search",
-    color: "#1A237E",
-    textIcon: "SX",
-    website: "https://docs.searxng.org",
-    hasFree: true,
-    authHint:
-      "API key is optional. Set your SearXNG base URL. Some instances may require a bearer token for access.",
-  },
-  "ollama-search": {
-    id: "ollama-search",
-    alias: "ollama-search",
-    name: "Ollama Search",
-    icon: "search",
-    color: "#58A6FF",
-    textIcon: "OS",
-    website: "https://ollama.com/settings/api-keys",
-    authHint: "Same API key as Ollama Cloud (from ollama.com/settings/api-keys)",
-  },
-};
 
 // Audio Only Providers
-export const AUDIO_ONLY_PROVIDERS = {
-  deepgram: {
-    id: "deepgram",
-    alias: "dg",
-    name: "Deepgram",
-    icon: "mic",
-    color: "#13EF93",
-    textIcon: "DG",
-    website: "https://deepgram.com",
-  },
-  assemblyai: {
-    id: "assemblyai",
-    alias: "aai",
-    name: "AssemblyAI",
-    icon: "record_voice_over",
-    color: "#0062FF",
-    textIcon: "AA",
-    website: "https://assemblyai.com",
-  },
-  elevenlabs: {
-    id: "elevenlabs",
-    alias: "el",
-    name: "ElevenLabs",
-    icon: "record_voice_over",
-    color: "#6C47FF",
-    textIcon: "EL",
-    website: "https://elevenlabs.io",
-  },
-  cartesia: {
-    id: "cartesia",
-    alias: "cartesia",
-    name: "Cartesia",
-    icon: "spatial_audio",
-    color: "#FF4F8B",
-    textIcon: "CA",
-    website: "https://cartesia.ai",
-  },
-  playht: {
-    id: "playht",
-    alias: "playht",
-    name: "PlayHT",
-    icon: "play_circle",
-    color: "#00B4D8",
-    textIcon: "PH",
-    website: "https://play.ht",
-  },
-  inworld: {
-    id: "inworld",
-    alias: "inworld",
-    name: "Inworld",
-    icon: "voice_chat",
-    color: "#7B2EF2",
-    textIcon: "IW",
-    website: "https://inworld.ai",
-  },
-  "aws-polly": {
-    id: "aws-polly",
-    alias: "polly",
-    name: "AWS Polly",
-    icon: "record_voice_over",
-    color: "#FF9900",
-    textIcon: "PL",
-    website: "https://aws.amazon.com/polly/",
-    authHint:
-      "Use AWS Secret Access Key as API key; set providerSpecificData.accessKeyId and optional region.",
-  },
-};
 
 export const OPENAI_COMPATIBLE_PREFIX = "openai-compatible-";
 export const ANTHROPIC_COMPATIBLE_PREFIX = "anthropic-compatible-";
@@ -2763,72 +2386,6 @@ export function isAnthropicCompatibleProvider(providerId: unknown): providerId i
   return typeof providerId === "string" && providerId.startsWith(ANTHROPIC_COMPATIBLE_PREFIX);
 }
 
-export const UPSTREAM_PROXY_PROVIDERS = {
-  cliproxyapi: {
-    id: "cliproxyapi",
-    alias: "cpa",
-    name: "CLIProxyAPI",
-    icon: "proxy",
-    color: "#6366F1",
-    textIcon: "CPA",
-    website: "https://github.com/router-for-me/CLIProxyAPI",
-    defaultPort: 8317,
-    healthEndpoint: "/v1/models",
-    managementPrefix: "/v0/management",
-    configDir: "~/.cli-proxy-api",
-    binaryName: "cli-proxy-api",
-    githubRepo: "router-for-me/CLIProxyAPI",
-  },
-  "9router": {
-    id: "9router",
-    alias: "nr",
-    name: "9router",
-    icon: "router",
-    color: "#0EA5E9",
-    textIcon: "9R",
-    website: "https://www.npmjs.com/package/9router",
-    defaultPort: 20130,
-    healthEndpoint: "/api/health",
-    npmPackage: "9router",
-    embedded: true,
-    isEmbeddedService: true,
-    riskNoticeVariant: "embedded-service" as const,
-  },
-};
-
-export const CLOUD_AGENT_PROVIDERS = {
-  jules: {
-    id: "jules",
-    alias: "jules",
-    name: "Google Jules",
-    icon: "engineering",
-    color: "#4285F4",
-    textIcon: "JL",
-    website: "https://jules.google",
-    authHint: "Jules API key for creating and managing cloud coding tasks.",
-  },
-  devin: {
-    id: "devin",
-    alias: "devin",
-    name: "Devin",
-    icon: "smart_toy",
-    color: "#111827",
-    textIcon: "DV",
-    website: "https://devin.ai",
-    authHint: "Devin API key for cloud agent sessions.",
-  },
-  "codex-cloud": {
-    id: "codex-cloud",
-    alias: "codex-cloud",
-    name: "Codex Cloud",
-    icon: "cloud",
-    color: "#10A37F",
-    textIcon: "CC",
-    website: "https://openai.com/codex",
-    authHint: "OpenAI API key with Codex Cloud task access.",
-  },
-};
-
 export function isClaudeCodeCompatibleProvider(providerId: unknown): providerId is string {
   return typeof providerId === "string" && providerId.startsWith(CLAUDE_CODE_COMPATIBLE_PREFIX);
 }
@@ -2841,6 +2398,7 @@ export function isLocalProvider(providerId: unknown): boolean {
 }
 
 export const SELF_HOSTED_CHAT_PROVIDER_IDS = new Set([
+  "ollama-local",
   "lm-studio",
   "vllm",
   "lemonade",
@@ -2907,18 +2465,6 @@ export function supportsBulkApiKey(providerId: unknown): boolean {
 }
 
 // ── System Providers (virtual, not user-connectable) ──────────────────────────
-export const SYSTEM_PROVIDERS = {
-  auto: {
-    id: "auto",
-    alias: "auto",
-    name: "Auto (Zero-Config)",
-    icon: "auto_awesome",
-    color: "#6366F1",
-    textIcon: "Auto",
-    systemOnly: true,
-    description: "Zero-config auto-routing with LKGP across all connected providers",
-  },
-};
 
 const _PROVIDER_SECTIONS = [
   NOAUTH_PROVIDERS,
@@ -3103,7 +2649,6 @@ export const ID_TO_ALIAS = new Proxy({} as Record<string, string>, {
 export const USAGE_SUPPORTED_PROVIDERS = [
   "antigravity",
   "agy",
-  "gemini-cli",
   "kiro",
   "amazon-q",
   "github",
@@ -3124,9 +2669,25 @@ export const USAGE_SUPPORTED_PROVIDERS = [
   "xiaomi-mimo",
   "vertex",
   "vertex-partner",
+  "codebuddy-cn",
 ];
 
 // ── Zod validation at module load (Phase 7.2) ──
+
+// Re-export the extracted data catalogs so external importers of providers.ts are unchanged.
+export {
+  NOAUTH_PROVIDERS,
+  OAUTH_PROVIDERS,
+  WEB_COOKIE_PROVIDERS,
+  APIKEY_PROVIDERS,
+  LOCAL_PROVIDERS,
+  SEARCH_PROVIDERS,
+  AUDIO_ONLY_PROVIDERS,
+  UPSTREAM_PROXY_PROVIDERS,
+  CLOUD_AGENT_PROVIDERS,
+  SYSTEM_PROVIDERS,
+};
+
 import { validateProviders } from "../validation/providerSchema";
 
 validateProviders(NOAUTH_PROVIDERS, "NOAUTH_PROVIDERS");

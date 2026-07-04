@@ -1,7 +1,7 @@
 ---
 title: "API Reference"
-version: 3.8.2
-lastUpdated: 2026-05-13
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # API Reference
@@ -60,22 +60,22 @@ Content-Type: application/json
 
 ### Custom Headers
 
-| Header                   | Direction | Description                                      |
-| ------------------------ | --------- | ------------------------------------------------ |
-| `X-OmniRoute-No-Cache`   | Request   | Set to `true` to bypass cache                    |
+| Header                   | Direction | Description                                                                                                                  |
+| ------------------------ | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `X-OmniRoute-No-Cache`   | Request   | Set to `true` to bypass cache                                                                                                |
 | `x-omniroute-no-memory`  | Request   | Set to `true` to skip memory + skills injection for this request (mirrors no-cache; avoids the per-call token/cost overhead) |
-| `X-OmniRoute-Progress`   | Request   | Set to `true` for progress events                |
-| `X-Session-Id`           | Request   | Sticky session key for external session affinity |
-| `x_session_id`           | Request   | Underscore variant also accepted (direct HTTP)   |
-| `Idempotency-Key`        | Request   | Dedup key (5s window)                            |
-| `X-Request-Id`           | Request   | Alternative dedup key                            |
-| `X-OmniRoute-Cache`      | Response  | `HIT` or `MISS` (non-streaming)                  |
-| `X-OmniRoute-Idempotent` | Response  | `true` if deduplicated                           |
-| `X-OmniRoute-Progress`   | Response  | `enabled` if progress tracking on                |
-| `X-OmniRoute-Session-Id` | Response  | Effective session ID used by OmniRoute           |
-| `X-OmniRoute-Request-Id` | Response  | Request correlation id (when known)              |
-| `X-OmniRoute-Version`    | Response  | OmniRoute build version (always present)         |
-| `X-OmniRoute-Cost-Saved` | Response  | USD the cache avoided on a HIT (cache hits only) |
+| `X-OmniRoute-Progress`   | Request   | Set to `true` for progress events                                                                                            |
+| `X-Session-Id`           | Request   | Sticky session key for external session affinity                                                                             |
+| `x_session_id`           | Request   | Underscore variant also accepted (direct HTTP)                                                                               |
+| `Idempotency-Key`        | Request   | Dedup key (5s window)                                                                                                        |
+| `X-Request-Id`           | Request   | Alternative dedup key                                                                                                        |
+| `X-OmniRoute-Cache`      | Response  | `HIT` or `MISS` (non-streaming)                                                                                              |
+| `X-OmniRoute-Idempotent` | Response  | `true` if deduplicated                                                                                                       |
+| `X-OmniRoute-Progress`   | Response  | `enabled` if progress tracking on                                                                                            |
+| `X-OmniRoute-Session-Id` | Response  | Effective session ID used by OmniRoute                                                                                       |
+| `X-OmniRoute-Request-Id` | Response  | Request correlation id (when known)                                                                                          |
+| `X-OmniRoute-Version`    | Response  | OmniRoute build version (always present)                                                                                     |
+| `X-OmniRoute-Cost-Saved` | Response  | USD the cache avoided on a HIT (cache hits only)                                                                             |
 
 > Nginx note: if you rely on underscore headers (for example `x_session_id`), enable `underscores_in_headers on;`.
 
@@ -88,14 +88,15 @@ Content-Type: application/json
 Per-request override of the compression plan. Highest precedence — beats the routing-combo
 override, the active profile, auto-trigger, and the panel Default. Values:
 
-| Value | Effect |
-|-------|--------|
-| `off` | No compression for this request. |
-| `default` | The panel-derived Default profile (ignores the active profile). |
-| `engine:<id>` | A single engine when enabled, e.g. `engine:rtk`. |
-| `<combo>` | A named combo, matched by name (case-insensitive) first, then by id. |
+| Value         | Effect                                                               |
+| ------------- | -------------------------------------------------------------------- |
+| `off`         | No compression for this request.                                     |
+| `default`     | The panel-derived Default profile (ignores the active profile).      |
+| `engine:<id>` | A single engine when enabled, e.g. `engine:rtk`.                     |
+| `<combo>`     | A named combo, matched by name (case-insensitive) first, then by id. |
 
 Notes:
+
 - Unknown values are ignored (the request is never rejected); resolution falls through to the normal operator precedence.
 - If multiple combos share a name, pass the combo **id** for a deterministic match.
 - A combo whose name is `off` or `default` cannot be selected by name (those keywords are interpreted first); reference such a combo by its id.
@@ -1040,7 +1041,6 @@ Returns the public A2A agent card (name, description, capabilities, skill catalo
 
 ## ACP (Agent Client Protocol) Management
 
-The ACP framework lets you spawn CLI agents (Claude Code, Codex, Gemini CLI, etc.)
 as child processes. These endpoints manage ACP agent detection and custom agent
 registration.
 
@@ -1324,7 +1324,7 @@ Manage OmniRoute plugins (third-party extensions).
 
 **Auth:** Requires management session.
 
-See [Plugins Framework](../plugins/PLUGIN_SDK.md) for full details.
+See [Plugins Framework](../frameworks/PLUGIN_SDK.md) for full details.
 
 ---
 

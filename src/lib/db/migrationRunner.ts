@@ -19,6 +19,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import type { SqliteAdapter } from "./adapters/types";
 import { DEFAULT_DATABASE_SETTINGS } from "@/types/databaseSettings";
+import {
+  RENAMED_MIGRATION_COMPATIBILITY,
+  LEGACY_VERSION_SLOT_MIGRATIONS,
+  SUPERSEDED_DUPLICATE_MIGRATIONS,
+  PHYSICAL_SCHEMA_SENTINELS,
+  INITIAL_SCHEMA_SENTINELS,
+  OPTIONAL_FTS5_MIGRATION_VERSIONS,
+} from "./migrationRunner/constants";
 
 const isNodeTestRunnerChild = typeof process.env.NODE_TEST_CONTEXT === "string";
 
@@ -282,7 +290,7 @@ function supportsFts5(db: SqliteAdapter): boolean {
   }
 
   try {
-    const probeTable = `__omniroute_fts5_probe_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const probeTable = `__omniroute_fts5_probe_${crypto.randomUUID().replace(/-/g, "_")}`;
     db.transaction(() => {
       db.exec(`CREATE VIRTUAL TABLE "${probeTable}" USING fts5(content);`);
       db.exec(`DROP TABLE "${probeTable}";`);
@@ -763,8 +771,7 @@ function reconcileRenumberedMigrations(
     const legacyRow = db
       .prepare("SELECT version, name FROM _omniroute_migrations WHERE version = ? AND name = ?")
       .get(compatibility.fromVersion, compatibility.fromName) as
-      | { version: string; name: string }
-      | undefined;
+      { version: string; name: string } | undefined;
     if (!legacyRow) {
       continue;
     }

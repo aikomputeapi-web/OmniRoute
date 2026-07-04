@@ -1,7 +1,7 @@
 ---
 title: "RTK Compression"
-version: 3.8.31
-lastUpdated: 2026-06-20
+version: 3.8.40
+lastUpdated: 2026-06-28
 ---
 
 # RTK Compression
@@ -109,7 +109,7 @@ them too, especially when they are shared across projects.
 RTK collapses duplicate lines at two independent layers:
 
 1. **Per-filter `deduplicate` (opt-in, default `false`).** A filter can set `rules.deduplicate: true`
-   to collapse consecutive duplicate lines *within that filter's matched output*, before truncation.
+   to collapse consecutive duplicate lines _within that filter's matched output_, before truncation.
    This runs inside `lineFilter.ts`. For legacy filters, it is auto-enabled when the filter defines
    `collapsePatterns`. Schema: `deduplicate: z.boolean().default(false)` in
    `open-sse/services/compression/engines/rtk/filterSchema.ts`.
@@ -124,7 +124,7 @@ output), so the two compose without double-counting.
 ## Line Grouping (`enableGrouping`)
 
 When `rtkConfig.enableGrouping` is `true` (default `false`), RTK runs an additional `groupSimilarLines`
-pass over the post-dedup result that collapses runs of *near-equivalent* (not byte-identical)
+pass over the post-dedup result that collapses runs of _near-equivalent_ (not byte-identical)
 consecutive lines. `rtkConfig.groupingThreshold` (default `3`) is the minimum run length that triggers
 grouping. This is the structural counterpart to `deduplicateThreshold`: dedup handles exact repeats,
 grouping handles "the same shape with small differences". Both flags are part of the `rtkConfig` JSON
@@ -201,13 +201,13 @@ the SQLite `key_value` table under `namespace = "compression"`, `key = "rtkConfi
 — including `enableGrouping`, `groupingThreshold`, `stripCodeComments`, and `preserveDocstrings` —
 round-trips through the same store and survives a restart.
 
-| Key                    | Default | Purpose                                                                       |
-| ---------------------- | ------- | ----------------------------------------------------------------------------- |
-| `deduplicateThreshold` | `3`     | Engine-wide: min consecutive identical lines to collapse (bounded 2–100)      |
-| `enableGrouping`       | `false` | Opt-in: collapse runs of near-equivalent consecutive lines                    |
-| `groupingThreshold`    | `3`     | Min consecutive similar-line run that triggers grouping                       |
-| `stripCodeComments`    | `false` | Opt-in: remove comments from fenced code blocks (needs `applyToCodeBlocks`)   |
-| `preserveDocstrings`   | `true`  | When stripping comments, keep JSDoc/`/** … */` blocks                         |
+| Key                    | Default | Purpose                                                                     |
+| ---------------------- | ------- | --------------------------------------------------------------------------- |
+| `deduplicateThreshold` | `3`     | Engine-wide: min consecutive identical lines to collapse (bounded 2–100)    |
+| `enableGrouping`       | `false` | Opt-in: collapse runs of near-equivalent consecutive lines                  |
+| `groupingThreshold`    | `3`     | Min consecutive similar-line run that triggers grouping                     |
+| `stripCodeComments`    | `false` | Opt-in: remove comments from fenced code blocks (needs `applyToCodeBlocks`) |
+| `preserveDocstrings`   | `true`  | When stripping comments, keep JSDoc/`/** … */` blocks                       |
 
 ## API
 

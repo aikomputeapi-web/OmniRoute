@@ -83,6 +83,12 @@ test("all skills have rawUrl and githubUrl as valid GitHub URLs", () => {
   }
 });
 
+test("agent skills constants expose URL builders without the unused repository URL", () => {
+  assert.equal(typeof agentSkillsConstants.getAgentSkillRawUrl, "function");
+  assert.equal(typeof agentSkillsConstants.getAgentSkillBlobUrl, "function");
+  assert.equal("AGENT_SKILLS_REPO_URL" in agentSkillsConstants, false);
+});
+
 test("api skills have area matching API_SKILL_IDS derived IDs", () => {
   const catalog = getCatalog();
   for (const id of API_SKILL_IDS) {

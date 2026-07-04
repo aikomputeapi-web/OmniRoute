@@ -66,7 +66,7 @@ Connect these 4 providers for **unlimited free AI**:
 1. **Kiro AI** — 50 credits/month (Claude models)
 2. **OpenCode Free** — Unlimited (GPT models)
 3. **Pollinations** — No key needed (multiple models)
-4. **LongCat** — 50M tokens/day (backup)
+4. **LongCat** — 10M tokens one-time (backup, requires KYC)
 
 Then use `model: "auto"` and OmniRoute will:
 
@@ -100,7 +100,7 @@ Browse the list and select one of these free providers:
 - **Kiro AI** — Free Claude models
 - **OpenCode Free** — Free GPT models
 - **Pollinations** — Free GPT-5, Claude, Gemini
-- **LongCat** — 50M tokens/day free
+- **LongCat** — 10M tokens free (one-time, requires KYC)
 - **Cloudflare AI** — 50+ models, 10K neurons/day
 
 ### Step 5: Click Connect
@@ -138,10 +138,10 @@ Connect 3-4 free providers for the best experience.
 
 ### LongCat
 
-- **Models**: LongCat-Flash-Lite
-- **Quota**: 50M tokens/day
-- **Auth**: No auth needed
-- **Best for**: High-volume usage
+- **Models**: LongCat-2.0
+- **Quota**: 10M tokens, one-time grant on signup (not recurring daily/monthly)
+- **Auth**: API key + KYC verification required to unlock the free grant
+- **Best for**: A one-off free allowance; pay-as-you-go beyond it
 
 ### Cloudflare AI
 

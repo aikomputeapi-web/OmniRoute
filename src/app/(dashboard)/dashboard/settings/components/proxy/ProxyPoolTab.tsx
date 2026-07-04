@@ -4,6 +4,8 @@ import { Button } from "@/shared/components";
 import { useTranslations } from "next-intl";
 import ProxyRegistryManager from "../ProxyRegistryManager";
 import VercelRelayModal from "./VercelRelayModal";
+import DenoRelayModal from "./DenoRelayModal";
+import CloudflareRelayModal from "./CloudflareRelayModal";
 
 export default function ProxyPoolTab() {
   const t = useTranslations("settings");
@@ -13,8 +15,25 @@ export default function ProxyPoolTab() {
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
   const showVercelRelay = process.env.NEXT_PUBLIC_VERCEL_RELAY_ENABLED !== "false";
+  const showDenoRelay = process.env.NEXT_PUBLIC_DENO_RELAY_ENABLED !== "false";
+  const showCloudflareRelay = process.env.NEXT_PUBLIC_CLOUDFLARE_RELAY_ENABLED !== "false";
+  const showAnyRelay = showVercelRelay || showDenoRelay || showCloudflareRelay;
 
-  const handleDeployed = (_poolProxyId: string, relayUrl: string) => {
+  // Close the dropdown on outside click — mirrors the upstream PR-1437
+  // grouped-button UX so adding more relay backends does not blow up the
+  // toolbar horizontally.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, [menuOpen]);
+
+  const handleVercelDeployed = (_poolProxyId: string, relayUrl: string) => {
     alert(`${t("vercelRelaySuccess")}: ${relayUrl}`);
   };
 
@@ -104,9 +123,19 @@ export default function ProxyPoolTab() {
 
       <ProxyRegistryManager />
       <VercelRelayModal
-        isOpen={relayModalOpen}
-        onClose={() => setRelayModalOpen(false)}
-        onDeployed={handleDeployed}
+        isOpen={vercelModalOpen}
+        onClose={() => setVercelModalOpen(false)}
+        onDeployed={handleVercelDeployed}
+      />
+      <DenoRelayModal
+        isOpen={denoModalOpen}
+        onClose={() => setDenoModalOpen(false)}
+        onDeployed={handleVercelDeployed}
+      />
+      <CloudflareRelayModal
+        isOpen={cloudflareModalOpen}
+        onClose={() => setCloudflareModalOpen(false)}
+        onDeployed={handleCloudflareDeployed}
       />
     </div>
   );

@@ -7,6 +7,7 @@ import {
   getSettings,
   getProviderNodes,
   getModelIsHidden,
+  getModelAliases,
 } from "@/lib/localDb";
 import { getAllEmbeddingModels } from "@omniroute/open-sse/config/embeddingRegistry";
 import { getAllImageModels } from "@omniroute/open-sse/config/imageRegistry";
@@ -36,6 +37,26 @@ import { parseModel } from "@omniroute/open-sse/services/model";
 import { getTokenLimit } from "@omniroute/open-sse/services/contextManager";
 import { extractApiKey } from "@/sse/services/auth";
 import type { ComboModelStep } from "@/lib/combos/steps";
+import {
+  type CustomModelEntry,
+  type ComboCatalogTarget,
+  type ComboTargetCatalogMetadata,
+  isPositiveFiniteNumber,
+  parseJsonStringArray,
+  intersectStringArrays,
+  minKnownNumber,
+  maybeOmitCatalogModelName,
+} from "./catalogHelpers";
+import {
+  qualifyOpenRouterModelId,
+  normalizeOpenRouterModalities,
+  getOpenRouterModelType,
+  isOpenRouterFreeModel,
+  getOpenRouterDisplayName,
+} from "./catalogOpenrouter";
+import { getVisionCapabilityFields, getCustomVisionCapabilityFields } from "./catalogVision";
+import { FALLBACK_ALIAS_TO_PROVIDER, buildAliasMaps } from "./catalogProviderMaps";
+import { getModelCatalogAuthRejection, isCodexModelCatalogClient } from "./catalogRequest";
 
 interface CustomModelEntry {
   id?: string;
@@ -1419,9 +1440,7 @@ export async function getUnifiedModelsResponse(
             continue;
           }
           const visionFields =
-            modelType === "chat"
-              ? getVisionCapabilityFields(aliasId) || getVisionCapabilityFields(modelId)
-              : null;
+            modelType === "chat" ? getCustomVisionCapabilityFields(model, aliasId, modelId) : null;
 
           models.push({
             id: aliasId,
@@ -1452,8 +1471,7 @@ export async function getUnifiedModelsResponse(
             if (models.some((m) => m.id === providerPrefixedId)) continue;
             const providerVisionFields =
               modelType === "chat"
-                ? getVisionCapabilityFields(providerPrefixedId) ||
-                  getVisionCapabilityFields(modelId)
+                ? getCustomVisionCapabilityFields(model, providerPrefixedId, modelId)
                 : null;
             models.push({
               id: providerPrefixedId,
@@ -1478,6 +1496,88 @@ export async function getUnifiedModelsResponse(
       }
     } catch (e) {
       console.log("Could not fetch custom models");
+    }
+
+    // Port of decolua/9router#730 — surface models registered ONLY through a model
+    // alias (`key_value` namespace `modelAliases`, value `"<providerKey>/<modelId>"`).
+    // Without this walk, a compatible-provider entry like `setModelAlias("kimi-k2.6",
+    // "custom/kimi-k2.6")` resolves at request time but never shows up in `/v1/models`.
+    // We respect the same gating as the static/custom listing path: provider must be
+    // active (or noAuth+unblocked), model must not be hidden, and the canonical alias
+    // entry must not already exist (so we don't shadow combo / synced / custom rows).
+    try {
+      const modelAliases = await getModelAliases();
+      const aliasBacked = extractAliasBackedModels(modelAliases);
+      for (const { providerKey, modelId } of aliasBacked) {
+        const canonicalProviderId = resolveCanonicalProviderId(providerKey);
+        if (!canonicalProviderId) continue;
+        if (
+          blockedProviders.has(providerKey) ||
+          blockedProviders.has(canonicalProviderId) ||
+          isNoAuthProviderBlocked(blockedProviders, canonicalProviderId, providerKey)
+        ) {
+          continue;
+        }
+
+        const alias = providerIdToAlias[canonicalProviderId] || providerKey;
+        if (
+          !activeAliases.has(alias) &&
+          !activeAliases.has(canonicalProviderId) &&
+          !activeAliases.has(providerKey)
+        ) {
+          continue;
+        }
+
+        if (getModelIsHidden(canonicalProviderId, modelId)) continue;
+
+        const aliasId = `${alias}/${modelId}`;
+        const rawPrefixedId = `${providerKey}/${modelId}`;
+        if (
+          models.some((m: any) => m?.id === aliasId) ||
+          models.some((m: any) => m?.id === rawPrefixedId)
+        ) {
+          continue;
+        }
+
+        const visionFields =
+          getVisionCapabilityFields(aliasId) || getVisionCapabilityFields(modelId);
+
+        if (includeAlias) {
+          models.push({
+            id: aliasId,
+            object: "model",
+            created: timestamp,
+            owned_by: canonicalProviderId,
+            permission: [],
+            root: modelId,
+            parent: null,
+            ...(visionFields || {}),
+          });
+        }
+        if (
+          includeCanonical &&
+          canonicalProviderId !== alias &&
+          !isNoAuthProviderKey(canonicalProviderId) &&
+          prefixRoutesToProvider(canonicalProviderId, canonicalProviderId)
+        ) {
+          const providerPrefixedId = `${canonicalProviderId}/${modelId}`;
+          if (models.some((m: any) => m?.id === providerPrefixedId)) continue;
+          const providerVisionFields =
+            getVisionCapabilityFields(providerPrefixedId) || getVisionCapabilityFields(modelId);
+          models.push({
+            id: providerPrefixedId,
+            object: "model",
+            created: timestamp,
+            owned_by: canonicalProviderId,
+            permission: [],
+            root: modelId,
+            parent: includeAlias ? aliasId : null,
+            ...(providerVisionFields || {}),
+          });
+        }
+      }
+    } catch (e) {
+      console.log("Could not fetch model aliases");
     }
 
     // Add managed fallback models for compatible providers that don't import a model list.
@@ -1539,15 +1639,18 @@ export async function getUnifiedModelsResponse(
     if (apiKey) {
       const { isModelAllowedForKey, getApiKeyMetadata } = await import("@/lib/db/apiKeys");
 
-      // Quota-exclusive keys (allowedQuotas non-empty): show only the
-      // quotaShared-* virtual models for the key's assigned pools (Phase B3).
-      // This takes precedence over the normal allowedModels filter.
+      // Quota-exclusive keys (allowedQuotas non-empty): list ONLY the pool's qtSd/*
+      // virtual models. #4806: build from the hidden qtSd/* combos directly — the base
+      // `models` list drops hidden combos, so filtering it returned nothing (0 models).
       const keyMeta = await getApiKeyMetadata(apiKey);
       if (keyMeta && keyMeta.allowedQuotas && keyMeta.allowedQuotas.length > 0) {
-        const { resolveQuotaKeyScope } = await import("@/lib/quota/quotaKey");
-        const { filterModelsToQuotaPools } = await import("@/lib/quota/quotaCombos");
-        const scope = await resolveQuotaKeyScope(keyMeta.allowedQuotas);
-        finalModels = filterModelsToQuotaPools(models, scope.poolSlugs);
+        const { buildQuotaExclusiveModels } = await import("@/lib/quota/quotaCombos");
+        finalModels = await buildQuotaExclusiveModels(
+          keyMeta.allowedQuotas,
+          combos,
+          timestamp,
+          (c) => buildComboCatalogMetadata(c, combos)
+        );
       } else {
         const filtered = [];
         for (const m of models) {

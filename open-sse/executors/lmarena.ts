@@ -31,7 +31,7 @@ const LMARENA_API_BASE = "https://arena.ai";
 const LMARENA_STREAM_URL = `${LMARENA_API_BASE}/nextjs-api/stream`;
 
 const LMARENA_USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 
 const LMARENA_AUTH_COOKIE = "arena-auth-prod-v1";
 
@@ -111,7 +111,10 @@ export function reconstructLMArenaCookie(rawCookie: string): string {
   const preserved = pairs.filter(
     (p) => p.name !== LMARENA_AUTH_COOKIE && !p.name.startsWith(chunkPrefix)
   );
-  const rebuilt = [`${LMARENA_AUTH_COOKIE}=${joined}`, ...preserved.map((p) => `${p.name}=${p.value}`)];
+  const rebuilt = [
+    `${LMARENA_AUTH_COOKIE}=${joined}`,
+    ...preserved.map((p) => `${p.name}=${p.value}`),
+  ];
   return rebuilt.join("; ");
 }
 
