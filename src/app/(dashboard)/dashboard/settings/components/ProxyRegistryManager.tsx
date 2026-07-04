@@ -114,6 +114,36 @@ export default function ProxyRegistryManager() {
 
   const editingId = useMemo(() => form.id || "", [form.id]);
 
+  // Multi-select: lets the user pick several proxies at once to delete or
+  // move/assign them, instead of acting one row at a time (#4878 follow-up).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<string | null>(null);
+  const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
+  const [bulkMoveSaving, setBulkMoveSaving] = useState(false);
+  const [bulkMoveScope, setBulkMoveScope] = useState("global");
+  const [bulkMoveScopeIds, setBulkMoveScopeIds] = useState("");
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelected((prev) => {
+      const allIds = items.map((i) => i.id);
+      const allSelected = allIds.length > 0 && allIds.every((id) => prev.has(id));
+      if (allSelected) return new Set();
+      return new Set(allIds);
+    });
+  }, [items]);
+
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+
   const loadHealth = useCallback(async () => {
     try {
       const res = await fetch("/api/settings/proxies/health?hours=24");
@@ -405,6 +435,147 @@ export default function ProxyRegistryManager() {
     }
   };
 
+  const handleBulkDelete = async (ids: string[]) => {
+    if (!ids.length) return;
+    // First confirm, then attempt each delete. For any proxy that returns 409
+    // (still assigned) we offer the existing force-delete flow once, mirroring
+    // handleDelete's UX. Errors are collected rather than aborting the batch.
+    const ok = window.confirm(t("bulkDeleteConfirm", { count: ids.length }));
+    if (!ok) return;
+    setBulkDeleting(true);
+    setBulkDeleteProgress(t("bulkDeleteProgress", { done: 0, total: ids.length }));
+    const failedIds: string[] = [];
+    let done = 0;
+    let failed = 0;
+    const CHUNK = 5;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const results = await Promise.all(
+        chunk.map(async (id) => {
+          try {
+            const res = await fetch(`/api/settings/proxies?id=${encodeURIComponent(id)}`, {
+              method: "DELETE",
+            });
+            if (res.ok) return { id, ok: true } as const;
+            if (res.status === 409) {
+              return { id, ok: false, conflict: true } as const;
+            }
+            return { id, ok: false } as const;
+          } catch {
+            return { id, ok: false } as const;
+          }
+        })
+      );
+      // Resolve conflicts with a single force-delete confirm for the whole group.
+      const conflicts = results.filter((r) => "conflict" in r && r.conflict);
+      if (conflicts.length > 0) {
+        const forceOk = window.confirm(
+          t("bulkDeleteForceConfirm", { count: conflicts.length })
+        );
+        if (forceOk) {
+          const forceResults = await Promise.all(
+            conflicts.map(async (r) => {
+              try {
+                const res = await fetch(
+                  `/api/settings/proxies?id=${encodeURIComponent(r.id)}&force=1`,
+                  { method: "DELETE" }
+                );
+                return { id: r.id, ok: res.ok } as const;
+              } catch {
+                return { id: r.id, ok: false } as const;
+              }
+            })
+          );
+          for (const r of forceResults) {
+            if (r.ok) done += 1;
+            else {
+              failed += 1;
+              failedIds.push(r.id);
+            }
+          }
+        } else {
+          for (const r of conflicts) {
+            failed += 1;
+            failedIds.push(r.id);
+          }
+        }
+      }
+      for (const r of results) {
+        if (!("conflict" in r) || !r.conflict) {
+          if (r.ok) done += 1;
+          else {
+            failed += 1;
+            failedIds.push(r.id);
+          }
+        }
+      }
+      setBulkDeleteProgress(
+        t("bulkDeleteProgress", { done, total: ids.length })
+      );
+    }
+    setSelected(new Set(failedIds));
+    setBulkDeleteProgress(t("bulkDeleteDone", { done, failed }));
+    setBulkDeleting(false);
+    setTimeout(() => setBulkDeleteProgress(null), 6000);
+    await load();
+  };
+
+  const handleBulkMoveApply = async () => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    setBulkMoveSaving(true);
+    setError(null);
+    try {
+      const scopeIds =
+        bulkMoveScope === "global"
+          ? []
+          : bulkMoveScopeIds
+              .split(/[\n,]/g)
+              .map((part) => part.trim())
+              .filter(Boolean);
+
+      // Assign each selected proxy to the chosen scope(s) sequentially,
+      // reusing the existing bulk-assign endpoint per proxy.
+      let done = 0;
+      let failed = 0;
+      const CHUNK = 5;
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK);
+        const results = await Promise.all(
+          chunk.map(async (id) => {
+            try {
+              const res = await fetch("/api/settings/proxies/bulk-assign", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  scope: bulkMoveScope,
+                  scopeIds,
+                  proxyId: id,
+                }),
+              });
+              return res.ok;
+            } catch {
+              return false;
+            }
+          })
+        );
+        for (const ok of results) {
+          if (ok) done += 1;
+          else failed += 1;
+        }
+      }
+      setBulkMoveOpen(false);
+      setBulkMoveScopeIds("");
+      setError(t("bulkMoveDone", { done, failed }));
+      setTimeout(() => setError(null), 5000);
+      await load();
+    } catch (e: any) {
+      setError(e?.message || t("errorBulkFailed"));
+    } finally {
+      setBulkMoveSaving(false);
+    }
+  };
+
   const handleMigrate = async () => {
     setMigrating(true);
     setError(null);
@@ -600,6 +771,46 @@ export default function ProxyRegistryManager() {
           </div>
         )}
 
+        {selected.size > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 p-2 rounded border border-primary/30 bg-primary/10">
+            <span className="text-sm">{t("selected", { count: selected.size })}</span>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="account_tree"
+              onClick={() => setBulkMoveOpen(true)}
+              disabled={bulkDeleting}
+              data-testid="proxy-registry-bulk-move-open"
+            >
+              {t("moveSelected")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="delete"
+              onClick={() => void handleBulkDelete(Array.from(selected))}
+              loading={bulkDeleting}
+              disabled={bulkDeleting}
+              className="!text-red-400"
+              data-testid="proxy-registry-bulk-delete"
+            >
+              {t("deleteSelected")}
+            </Button>
+            {bulkDeleteProgress && (
+              <span className="text-xs text-text-muted">{bulkDeleteProgress}</span>
+            )}
+            <button
+              type="button"
+              onClick={clearSelection}
+              disabled={bulkDeleting}
+              className="text-xs text-text-muted hover:text-text-main ml-1"
+              aria-label={t("clearSelection")}
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {loading ? (
           <div className="text-sm text-text-muted">{t("loading")}</div>
         ) : items.length === 0 ? (
@@ -609,6 +820,27 @@ export default function ProxyRegistryManager() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-text-muted border-b border-border">
+                  <th className="py-2 pr-3 w-8">
+                    {(() => {
+                      const allIds = items.map((i) => i.id);
+                      const allSelected =
+                        allIds.length > 0 && allIds.every((id) => selected.has(id));
+                      const someSelected = selected.size > 0 && !allSelected;
+                      return (
+                        <input
+                          type="checkbox"
+                          aria-label={t("selectAll")}
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someSelected;
+                          }}
+                          onChange={toggleSelectAll}
+                          disabled={loading || items.length === 0 || bulkDeleting}
+                          className="rounded"
+                        />
+                      );
+                    })()}
+                  </th>
                   <th className="py-2 pr-3">{t("tableName")}</th>
                   <th className="py-2 pr-3">{t("tableEndpoint")}</th>
                   <th className="py-2 pr-3">{t("tableStatus")}</th>
@@ -623,6 +855,16 @@ export default function ProxyRegistryManager() {
                   const health = healthById[item.id];
                   return (
                     <tr key={item.id} className="border-b border-border/60">
+                      <td className="py-2 pr-3 w-8">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(item.id)}
+                          onChange={() => toggleSelect(item.id)}
+                          disabled={bulkDeleting}
+                          aria-label={`Select ${item.name}`}
+                          className="rounded"
+                        />
+                      </td>
                       <td className="py-2 pr-3">
                         <div className="font-medium text-text-main">{item.name}</div>
                         {item.region && (
@@ -906,6 +1148,66 @@ export default function ProxyRegistryManager() {
               data-testid="proxy-registry-bulk-apply"
             >
               {t("bulkApply")}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Bulk Move / Assign Selected Modal */}
+      <Modal
+        isOpen={bulkMoveOpen}
+        onClose={() => {
+          if (!bulkMoveSaving) setBulkMoveOpen(false);
+        }}
+        title={t("bulkMoveTitle")}
+        maxWidth="lg"
+      >
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-text-muted">
+            {t("bulkMoveApply", { count: selected.size })}
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">{t("bulkMoveScope")}</label>
+              <select
+                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
+                value={bulkMoveScope}
+                onChange={(e) => setBulkMoveScope(e.target.value)}
+              >
+                <option value="global">{t("scopeGlobal")}</option>
+                <option value="provider">{t("scopeProvider")}</option>
+                <option value="account">{t("scopeAccount")}</option>
+                <option value="combo">{t("scopeCombo")}</option>
+              </select>
+            </div>
+          </div>
+
+          {bulkMoveScope !== "global" && (
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">{t("bulkMoveScopeIds")}</label>
+              <textarea
+                data-testid="proxy-registry-bulk-move-scopeids-input"
+                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
+                rows={5}
+                value={bulkMoveScopeIds}
+                onChange={(e) => setBulkMoveScopeIds(e.target.value)}
+                placeholder={t("bulkMoveScopeIdsPlaceholder")}
+              />
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+            <Button size="sm" variant="secondary" onClick={() => setBulkMoveOpen(false)}>
+              {t("cancel")}
+            </Button>
+            <Button
+              size="sm"
+              icon="done_all"
+              onClick={handleBulkMoveApply}
+              loading={bulkMoveSaving}
+              data-testid="proxy-registry-bulk-move-apply"
+            >
+              {t("bulkMoveApply", { count: selected.size })}
             </Button>
           </div>
         </div>

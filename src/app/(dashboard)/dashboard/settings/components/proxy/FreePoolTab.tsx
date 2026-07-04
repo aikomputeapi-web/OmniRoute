@@ -35,6 +35,11 @@ export default function FreePoolTab() {
   const [runningScraper, setRunningScraper] = useState(false);
   const [testingAll, setTestingAll] = useState(false);
   const [removingBad, setRemovingBad] = useState(false);
+  // #4878 follow-up: surface per-source sync errors (declared here so #5595's
+  // use of setSyncErrors / syncErrors in handleSync compiles and renders).
+  const [syncErrors, setSyncErrors] = useState<Record<string, string[]> | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgressMsg, setBulkProgressMsg] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<string>("");
   const [fetchingLogs, setFetchingLogs] = useState(false);
@@ -274,6 +279,73 @@ export default function FreePoolTab() {
     setTimeout(() => setBulkProgress(null), 4000);
   };
 
+  // #4878 multi-select: bulk-delete the selected free proxies. Reuses the
+  // existing per-id DELETE route (DELETE /api/settings/free-proxies?id=…)
+  // rather than introducing a new endpoint, chunking to keep request bodies
+  // bounded and to match the MAX_BULK_IDS convention used by the providers
+  // connections hook.
+  const handleBulkDelete = async (ids: string[]) => {
+    if (!ids.length) return;
+    const ok = window.confirm(
+      t("proxyFreePoolBulkDeleteConfirm", { count: ids.length })
+    );
+    if (!ok) return;
+    setBulkDeleting(true);
+    setBulkProgressMsg(t("proxyFreePoolBulkDeleteProgress", { done: 0, total: ids.length }));
+    const CHUNK = 5;
+    let done = 0;
+    let failed = 0;
+    const failedIds: string[] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const results = await Promise.all(
+        chunk.map(async (id) => {
+          try {
+            const res = await fetch(`/api/settings/free-proxies?id=${encodeURIComponent(id)}`, {
+              method: "DELETE",
+            });
+            return res.ok;
+          } catch {
+            return false;
+          }
+        })
+      );
+      results.forEach((okFlag, idx) => {
+        if (okFlag) done += 1;
+        else {
+          failed += 1;
+          failedIds.push(chunk[idx]);
+        }
+      });
+      setProxies((prev) => prev.filter((p) => !chunk.includes(p.id)));
+      setBulkProgressMsg(
+        t("proxyFreePoolBulkDeleteProgress", { done, total: ids.length })
+      );
+    }
+    // keep failed ids selected so the user can review/retry
+    setSelected(new Set(failedIds));
+    setBulkProgressMsg(t("proxyFreePoolBulkDeleteDone", { done, failed }));
+    setBulkDeleting(false);
+    setTimeout(() => setBulkProgressMsg(null), 5000);
+  };
+
+  const handleToggleSelectAll = () => {
+    setSelected((prev) => {
+      // select only currently-visible proxies that are eligible
+      // (not already in the pool — those checkboxes are disabled).
+      const eligible = proxies.filter((p) => !p.inPool).map((p) => p.id);
+      const allSelected = eligible.every((id) => prev.has(id)) && eligible.length > 0;
+      if (allSelected) {
+        const next = new Set(prev);
+        for (const id of eligible) next.delete(id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const id of eligible) next.add(id);
+      return next;
+    });
+  };
+
   const notInPoolProxies = proxies.filter((p) => !p.inPool);
 
   // Source colors
@@ -400,10 +472,30 @@ export default function FreePoolTab() {
       {selected.size > 0 && (
         <div className="flex items-center gap-2 p-2 bg-primary/10 rounded border border-primary/20">
           <span className="text-xs">{t("proxyFreePoolSelected", { count: selected.size })}</span>
-          <Button size="sm" variant="primary" onClick={() => handleBulkAdd(Array.from(selected))}>
+          <Button size="sm" variant="primary" onClick={() => handleBulkAdd(Array.from(selected))} disabled={bulkDeleting}>
             {t("proxyFreePoolAddSelected")}
           </Button>
-          {bulkProgress && <span className="text-xs text-text-muted">{bulkProgress}</span>}
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="delete"
+            onClick={() => void handleBulkDelete(Array.from(selected))}
+            loading={bulkDeleting}
+            disabled={bulkDeleting}
+          >
+            {t("proxyFreePoolDeleteSelected")}
+          </Button>
+          {(bulkProgress || bulkProgressMsg) && (
+            <span className="text-xs text-text-muted">{bulkProgressMsg ?? bulkProgress}</span>
+          )}
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            disabled={bulkDeleting}
+            className="text-xs text-text-muted hover:text-text-main ml-1"
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -419,7 +511,29 @@ export default function FreePoolTab() {
         <table className="w-full text-sm">
           <thead className="bg-surface-alt text-text-muted text-xs">
             <tr>
-              <th className="px-3 py-2 text-left w-8" scope="col"></th>
+              <th className="px-3 py-2 text-left w-8" scope="col">
+                {(() => {
+                  const eligibleIds = proxies.filter((p) => !p.inPool).map((p) => p.id);
+                  const allEligibleSelected =
+                    eligibleIds.length > 0 &&
+                    eligibleIds.every((id) => selected.has(id));
+                  const someSelected =
+                    selected.size > 0 && !allEligibleSelected;
+                  return (
+                    <input
+                      type="checkbox"
+                      aria-label={t("proxyFreePoolToggleSelectAll")}
+                      checked={allEligibleSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someSelected;
+                      }}
+                      onChange={handleToggleSelectAll}
+                      disabled={loading || proxies.length === 0 || bulkDeleting}
+                      className="rounded"
+                    />
+                  );
+                })()}
+              </th>
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolSource")}</th>
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolHostPort")}</th>
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolType")}</th>

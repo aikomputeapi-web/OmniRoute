@@ -48,6 +48,70 @@ export default function OneproxyTab() {
   const [filterCountry, setFilterCountry] = useState("");
   const [minQuality, setMinQuality] = useState("");
 
+  // Multi-select checkboxes for batch delete (#4878 follow-up)
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgressMsg, setBulkProgressMsg] = useState<string | null>(null);
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      const allIds = proxies.map((p) => p.id);
+      const allSelected = allIds.length > 0 && allIds.every((id) => prev.has(id));
+      if (allSelected) return new Set();
+      return new Set(allIds);
+    });
+  };
+
+  const handleBulkDelete = async (ids: string[]) => {
+    if (!ids.length) return;
+    const ok = window.confirm(t("oneproxyBulkDeleteConfirm", { count: ids.length }));
+    if (!ok) return;
+    setBulkDeleting(true);
+    setBulkProgressMsg(t("oneproxyBulkDeleteProgress", { done: 0, total: ids.length }));
+    const CHUNK = 5;
+    let done = 0;
+    let failed = 0;
+    const failedIds: string[] = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const results = await Promise.all(
+        chunk.map(async (id) => {
+          try {
+            const res = await fetch(`/api/settings/oneproxy?id=${encodeURIComponent(id)}`, {
+              method: "DELETE",
+            });
+            return res.ok;
+          } catch {
+            return false;
+          }
+        })
+      );
+      results.forEach((okFlag, idx) => {
+        if (okFlag) done += 1;
+        else {
+          failed += 1;
+          failedIds.push(chunk[idx]);
+        }
+      });
+      setProxies((prev) => prev.filter((p) => !chunk.includes(p.id)));
+      setBulkProgressMsg(t("oneproxyBulkDeleteProgress", { done, total: ids.length }));
+    }
+    setSelected(new Set(failedIds));
+    setBulkProgressMsg(t("oneproxyBulkDeleteDone", { done, failed }));
+    setBulkDeleting(false);
+    setTimeout(() => setBulkProgressMsg(null), 5000);
+    if (stats) setStats({ ...stats, total: stats.total - done });
+  };
+
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -226,6 +290,31 @@ export default function OneproxyTab() {
         </div>
       </Card>
 
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 p-2 rounded border border-primary/30 bg-primary/10">
+          <span className="text-sm">{t("oneproxySelected", { count: selected.size })}</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="delete"
+            onClick={() => void handleBulkDelete(Array.from(selected))}
+            loading={bulkDeleting}
+            disabled={bulkDeleting}
+          >
+            {t("oneproxyDeleteSelected")}
+          </Button>
+          {bulkProgressMsg && <span className="text-xs text-text-muted">{bulkProgressMsg}</span>}
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            disabled={bulkDeleting}
+            className="text-xs text-text-muted hover:text-text-main ml-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <Card className="p-4">
         {loading ? (
           <div className="text-center py-8 text-text-muted">{t("oneproxyLoadingProxies")}</div>
@@ -238,6 +327,27 @@ export default function OneproxyTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
+                  <th className="text-left py-2 px-3 text-text-muted font-medium w-8">
+                    {(() => {
+                      const allIds = proxies.map((p) => p.id);
+                      const allSelected =
+                        allIds.length > 0 && allIds.every((id) => selected.has(id));
+                      const someSelected = selected.size > 0 && !allSelected;
+                      return (
+                        <input
+                          type="checkbox"
+                          aria-label={t("oneproxyToggleSelectAll")}
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someSelected;
+                          }}
+                          onChange={toggleSelectAll}
+                          disabled={loading || proxies.length === 0 || bulkDeleting}
+                          className="rounded"
+                        />
+                      );
+                    })()}
+                  </th>
                   <th className="text-left py-2 px-3 text-text-muted font-medium">Host</th>
                   <th className="text-left py-2 px-3 text-text-muted font-medium">Protocol</th>
                   <th className="text-left py-2 px-3 text-text-muted font-medium">Country</th>
@@ -254,6 +364,16 @@ export default function OneproxyTab() {
                     key={proxy.id}
                     className="border-b border-border/50 hover:bg-black/5 dark:hover:bg-white/5"
                   >
+                    <td className="py-2 px-3 w-8">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(proxy.id)}
+                        onChange={() => toggleSelect(proxy.id)}
+                        disabled={bulkDeleting}
+                        aria-label={`Select ${proxy.host}:${proxy.port}`}
+                        className="rounded"
+                      />
+                    </td>
                     <td className="py-2 px-3 font-mono text-text-main">
                       {proxy.host}:{proxy.port}
                     </td>
