@@ -182,7 +182,7 @@ export function getCanonicalRootId(rootId: string): string {
   if (lower.includes("claude") && lower.includes("opus")) {
     return "claude-opus-4-7";
   }
-  if (lower.includes("claude") && (lower.includes("haiku") || lower.includes("haiku"))) {
+  if (lower.includes("claude") && lower.includes("haiku")) {
     return "claude-haiku-4-5";
   }
 
@@ -879,7 +879,7 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
           } catch {}
         }
       }
-      if (rootId === "glm-5") {
+      if (rootId === "glm-5.1") {
         const extraPatterns = ["glm-5", "glm-5.1", "z-ai/glm-5.1"];
         for (const p of extraPatterns) {
           try {

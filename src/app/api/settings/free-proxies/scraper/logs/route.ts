@@ -1,11 +1,21 @@
 import { readFile } from "fs/promises";
+import fs from "fs";
 import path from "path";
 import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
 import { createErrorResponse } from "@/lib/api/errorResponse";
 
-// Shared volume path: omniroute mounts proxy_scraper_data at /app/proxy_scraper_data
-const SCRAPER_DATA_DIR = path.resolve("/app/proxy_scraper_data");
-const LOG_FILE = path.join(SCRAPER_DATA_DIR, "scraper.log");
+function resolveScraperDataDir(): string {
+  if (process.env.SCRAPER_DATA_DIR) {
+    return path.resolve(process.env.SCRAPER_DATA_DIR);
+  }
+  const dockerPath = "/app/proxy_scraper_data";
+  try {
+    if (fs.existsSync(dockerPath)) return dockerPath;
+  } catch {}
+  return path.join(process.cwd(), "proxy_scraper_data");
+}
+
+const LOG_FILE = path.join(resolveScraperDataDir(), "scraper.log");
 
 export async function GET(request: Request) {
   const authError = await requireManagementAuth(request);
@@ -16,15 +26,12 @@ export async function GET(request: Request) {
     try {
       raw = await readFile(LOG_FILE, "utf8");
     } catch {
-      // Log file doesn't exist yet — scraper hasn't run or log not written
       raw = "";
     }
 
-    // Return only the last 250 lines so the UI console stays manageable
     const lines = raw.split("\n");
     const tail = lines.slice(-250).join("\n");
 
-    // Strip ANSI escape codes
     const cleaned = tail.replace(
       /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
       ""

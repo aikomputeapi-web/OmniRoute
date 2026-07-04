@@ -5,6 +5,8 @@ export type WebhookEvent =
   | "provider.recovered"
   | "quota.exceeded"
   | "combo.switched"
+  | "proxy.demoted"
+  | "proxy.pool-low"
   | "test.ping";
 
 export interface EventDescription {
@@ -65,6 +67,26 @@ export const EVENT_DESCRIPTIONS: Record<WebhookEvent, EventDescription> = {
       fromModel: "gpt-4o",
       toModel: "claude-opus-4-7",
       reason: "provider.error",
+    },
+  },
+  "proxy.demoted": {
+    label: "Proxy Demoted",
+    emoji: "⬇️",
+    description: "A proxy was demoted between tiers due to liveness failures or repeated real-request errors.",
+    exampleData: {
+      tier: 3,
+      host: "1.2.3.4",
+      port: 8080,
+      reason: "liveness-failed",
+    },
+  },
+  "proxy.pool-low": {
+    label: "Proxy Pool Low",
+    emoji: "🪫",
+    description: "The live Tier 3 proxy pool dropped below the minimum healthy threshold.",
+    exampleData: {
+      liveCount: 1,
+      threshold: 3,
     },
   },
   "test.ping": {

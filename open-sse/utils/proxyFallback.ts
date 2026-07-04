@@ -35,7 +35,9 @@ interface ProxyShape {
 // ---------------------------------------------------------------------------
 
 const PROXY_FALLBACK_CACHE = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes (positive result)
+const NEGATIVE_CACHE_TTL_MS = 45 * 1000; // 45 seconds — short window so freshly
+// promoted proxies become discoverable quickly even when the previous probe found none.
 
 /**
  * Clear the in-memory proxy fallback cache.
@@ -327,10 +329,12 @@ export async function findWorkingProxy(
     return proxyUrl;
   }
 
-  // All failed — cache the negative result to avoid re-probing too often
+  // All failed — cache the negative result with a SHORT TTL so that the moment
+  // the background job promotes new proxies, callers can re-probe instead of
+  // being blocked for the full positive-result window.
   PROXY_FALLBACK_CACHE.set(targetHostname, {
     proxyUrl: "",
-    expiresAt: Date.now() + CACHE_TTL_MS,
+    expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS,
   });
 
   return null;

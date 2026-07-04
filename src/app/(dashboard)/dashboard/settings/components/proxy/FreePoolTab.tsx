@@ -38,6 +38,7 @@ export default function FreePoolTab() {
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<string>("");
   const [fetchingLogs, setFetchingLogs] = useState(false);
+  const [scraperError, setScraperError] = useState<string | null>(null);
   const logPreRef = useRef<HTMLPreElement>(null);
 
   const fetchLogs = useCallback(async () => {
@@ -59,7 +60,7 @@ export default function FreePoolTab() {
   }, [logs]);
 
   useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
     if (showLogs || runningScraper) {
       Promise.resolve().then(() => void fetchLogs());
       intervalId = setInterval(() => {
@@ -136,31 +137,39 @@ export default function FreePoolTab() {
   const handleRunScraper = async () => {
     setRunningScraper(true);
     setShowLogs(true);
+    setScraperError(null);
     try {
       const res = await fetch("/api/settings/free-proxies/scraper/start", {
         method: "POST",
       });
       if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Unknown error" }));
+        setScraperError(err.message || `Request failed (${res.status})`);
         setRunningScraper(false);
         return;
       }
-    } catch {
+      // Refresh data after a short delay to show initial progress, then again later
+      setTimeout(() => void loadData(), 5000);
+      setTimeout(() => {
+        setRunningScraper(false);
+        void loadData();
+      }, 3 * 60 * 1000);
+    } catch (err) {
+      setScraperError(String(err));
       setRunningScraper(false);
-      return;
     }
-    setTimeout(() => {
-      setRunningScraper(false);
-      void loadData();
-    }, 3 * 60 * 1000);
   };
 
   const handleTestAll = async () => {
     setTestingAll(true);
     try {
-      await fetch("/api/settings/free-proxies/test-all", {
+      const res = await fetch("/api/settings/free-proxies/test-all", {
         method: "POST",
       });
-      setTimeout(() => loadData(), 2000);
+      if (!res.ok) {
+        console.error("Test-all request failed:", res.status);
+      }
+      setTimeout(() => void loadData(), 2000);
     } catch {}
     setTestingAll(false);
   };
@@ -168,26 +177,12 @@ export default function FreePoolTab() {
   const handleRemoveBad = async () => {
     setRemovingBad(true);
     try {
-      const { testSingleProxy } = await import("@omniroute/open-sse/utils/proxyFallback");
-      const TEST_URL = "https://api.openai.com/v1/models";
-
-      // Test all proxies that have been validated before (test_count > 0)
-      const candidates = proxies.filter((p) => p.qualityScore != null);
-      let removed = 0;
-      for (const proxy of candidates) {
-        try {
-          const url = `${proxy.type}://${proxy.host}:${proxy.port}`;
-          const { ok } = await testSingleProxy(url, TEST_URL, 5000);
-          if (!ok) {
-            await fetch(`/api/settings/free-proxies?id=${proxy.id}`, { method: "DELETE" });
-            removed++;
-          }
-        } catch {
-          await fetch(`/api/settings/free-proxies?id=${proxy.id}`, { method: "DELETE" });
-          removed++;
-        }
-      }
-      alert(`Removed ${removed} dead proxy(s) from free pool.`);
+      const res = await fetch("/api/settings/free-proxies/remove-bad", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json().catch(() => ({ removed: 0 }));
+      alert(`Removed ${data.removed ?? 0} dead proxy(s) from free pool.`);
       await loadData();
     } catch {}
     setRemovingBad(false);
@@ -250,6 +245,10 @@ export default function FreePoolTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids }),
       });
+      if (!res.ok) {
+        setBulkProgress(`Request failed (${res.status})`);
+        return;
+      }
       const data = await res.json();
       setBulkProgress(`${data.succeeded ?? 0} added, ${data.failed ?? 0} failed`);
       await loadData();
@@ -356,8 +355,13 @@ export default function FreePoolTab() {
               </button>
             </div>
           </div>
+          {scraperError && (
+            <div className="text-xs font-mono text-red-400 bg-red-900/20 border border-red-800/40 rounded px-3 py-2 mb-1">
+              Error: {scraperError}
+            </div>
+          )}
           <pre ref={logPreRef} className="font-mono text-xs overflow-auto bg-black text-emerald-400 p-3 h-64 shadow-inner whitespace-pre-wrap select-text scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-            {logs || "No log activity recorded yet. Run a scrape to begin."}
+            {logs || (scraperError ? "" : "No log activity recorded yet. Run a scrape to begin.")}
           </pre>
         </div>
       )}
@@ -391,14 +395,15 @@ export default function FreePoolTab() {
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolCountry")}</th>
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolQuality")}</th>
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolLatency")}</th>
+              <th className="px-3 py-2 text-left" scope="col" title="Successful / failed tests over time">Tests</th>
               <th className="px-3 py-2 text-left" scope="col"></th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-text-muted">{t("loading")}</td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-text-muted">{t("loading")}</td></tr>
             ) : proxies.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-text-muted">{t("proxyFreePoolEmpty")}</td></tr>
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-text-muted">{t("proxyFreePoolEmpty")}</td></tr>
             ) : (
               proxies.map((p) => (
                 <FreeProxyRow

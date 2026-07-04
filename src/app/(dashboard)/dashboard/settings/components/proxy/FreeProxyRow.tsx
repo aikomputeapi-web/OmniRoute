@@ -12,6 +12,8 @@ export interface FreeProxyRowData {
   latencyMs: number | null;
   anonymity: string | null;
   inPool: boolean;
+  testCount?: number;
+  successCount?: number;
 }
 
 interface FreeProxyRowProps {
@@ -106,6 +108,17 @@ export default function FreeProxyRow({
           <span className="text-emerald-400">{testResult.latencyMs}ms</span>
         ) : (
           proxy.latencyMs != null ? `${proxy.latencyMs}ms` : "—"
+        )}
+      </td>
+      <td className="px-3 py-2 text-xs font-mono whitespace-nowrap" title="Successful / failed tests over time">
+        {proxy.testCount != null && proxy.testCount > 0 ? (
+          <span>
+            <span className="text-emerald-400">{proxy.successCount ?? 0}</span>
+            <span className="text-text-muted"> / </span>
+            <span className="text-red-400">{proxy.testCount - (proxy.successCount ?? 0)}</span>
+          </span>
+        ) : (
+          <span className="text-text-muted">—</span>
         )}
       </td>
       <td className="px-3 py-2">

@@ -108,9 +108,9 @@ function normalizePlanLimits(row: PlanRow | null): PlanLimits | null {
     requestsPerMinute: Math.max(0, toNumber(row.requests_per_minute, 0)),
     requestsPerDay: Math.max(0, toNumber(row.requests_per_day, 0)),
     requestsPerMonth: Math.max(0, toNumber(row.requests_per_month, 0)),
-    limit5hTokens: Math.max(0, toNumber(row.limit_5h_tokens, 1500000)),
-    limitWeekTokens: Math.max(0, toNumber(row.limit_week_tokens, 5000000)),
-    limitMonthTokens: Math.max(0, toNumber(row.limit_month_tokens, 15000000)),
+    limit5hTokens: Math.max(0, toNumber(row.limit_5h_tokens, 2000000)),
+    limitWeekTokens: Math.max(0, toNumber(row.limit_week_tokens, 8000000)),
+    limitMonthTokens: Math.max(0, toNumber(row.limit_month_tokens, 25000000)),
   };
 }
 
@@ -190,9 +190,9 @@ export async function getUserPlan(
       requestsPerMinute: Math.max(0, toNumber(row.plan_requests_per_minute, 0)),
       requestsPerDay: Math.max(0, toNumber(row.plan_requests_per_day, 0)),
       requestsPerMonth: Math.max(0, toNumber(row.plan_requests_per_month, 0)),
-      limit5hTokens: Math.max(0, toNumber(row.plan_limit_5h_tokens, 1500000)),
-      limitWeekTokens: Math.max(0, toNumber(row.plan_limit_week_tokens, 5000000)),
-      limitMonthTokens: Math.max(0, toNumber(row.plan_limit_month_tokens, 15000000)),
+      limit5hTokens: Math.max(0, toNumber(row.plan_limit_5h_tokens, 2000000)),
+      limitWeekTokens: Math.max(0, toNumber(row.plan_limit_week_tokens, 8000000)),
+      limitMonthTokens: Math.max(0, toNumber(row.plan_limit_month_tokens, 25000000)),
     };
 
     return {

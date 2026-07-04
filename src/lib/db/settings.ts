@@ -148,13 +148,17 @@ export async function getSettings() {
     proxyEnabled: true,
     perKeyProxyEnabled: false,
     freeProxyAutoJobEnabled: process.env.FREE_PROXY_AUTO_JOB_ENABLED !== "false",
-    freeProxyCheckIntervalMin: 15,
-    freeProxySyncIntervalMin: 60,
+    freeProxyCheckIntervalMin: 10,
+    freeProxySyncIntervalMin: 30,
     freeProxyCountryFilter: process.env.FREE_PROXY_COUNTRY_FILTER || "US",
     freeProxyMinQuality: 40,
     freeProxyMinTests: 5,
     freeProxyMinSuccessRate: 100,
     freeProxyAutoElevate: true,
+    freeProxyTier1PromoteThreshold: 5,
+    freeProxyTier2DemoteThreshold: 2,
+    freeProxyLiveFailThreshold: 3,
+    freeProxyAutoDistribute: process.env.FREE_PROXY_AUTO_DISTRIBUTE === "true",
   };
   for (const row of rows) {
     const record = toRecord(row);

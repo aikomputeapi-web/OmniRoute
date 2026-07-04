@@ -249,3 +249,22 @@ export function getProxyLogStats() {
   const direct = proxyLogs.filter((l) => l.level === "direct").length;
   return { total, success, error, timeout, direct };
 }
+
+/**
+ * Aggregate recent per-proxy failure counts from the in-memory ring buffer.
+ * Returns a map keyed by `host:port` → number of failed (error/timeout) events
+ * within the last `windowMs` (default 5 minutes). Used by the free proxy job
+ * to demote proxies that are failing real traffic before the next full probe.
+ */
+export function getRecentProxyFailures(windowMs = 5 * 60 * 1000): Map<string, number> {
+  const cutoff = Date.now() - windowMs;
+  const result = new Map<string, number>();
+  for (const l of proxyLogs) {
+    if (!l.proxy || l.status === "success") continue;
+    const ts = Date.parse(l.timestamp);
+    if (Number.isNaN(ts) || ts < cutoff) continue;
+    const key = `${l.proxy.host}:${l.proxy.port}`;
+    result.set(key, (result.get(key) ?? 0) + 1);
+  }
+  return result;
+}

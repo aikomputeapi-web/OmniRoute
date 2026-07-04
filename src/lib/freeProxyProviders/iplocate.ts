@@ -110,7 +110,7 @@ export class IplocateProvider implements FreeProxyProvider {
             type: normalizedType as FreeProxyItem["type"],
             countryCode: p.country?.slice(0, 2).toUpperCase() || null,
             qualityScore: p.speed ? Math.min(100, Math.max(0, Math.round((1 - p.speed / 10000) * 100))) : 50,
-            latencyMs: p.speed || null,
+            latencyMs: p.speed ?? null,
             anonymity: p.anonymityLevel || null,
             lastValidated: new Date().toISOString(),
           };

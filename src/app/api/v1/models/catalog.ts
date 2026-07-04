@@ -44,6 +44,7 @@ interface CustomModelEntry {
   apiFormat?: string;
   supportedEndpoints?: string[];
   inputTokenLimit?: number;
+  outputTokenLimit?: number;
   isHidden?: boolean;
 }
 
@@ -223,7 +224,7 @@ const VISION_MODEL_KEYWORDS = [
   "multimodal",
   "kimi",
 ];
-function isVisionModelId(modelId: string): boolean {
+export function isVisionModelId(modelId: string): boolean {
   const normalized = String(modelId || "").toLowerCase();
   if (!normalized) return false;
   return VISION_MODEL_KEYWORDS.some((keyword) => normalized.includes(keyword));
@@ -1133,7 +1134,11 @@ export async function getUnifiedModelsResponse(
         return false;
       }
 
-      return activeAliases.has(alias) || activeAliases.has(provider);
+      return (
+        activeAliases.has(alias) ||
+        activeAliases.has(provider) ||
+        activeAliases.has(canonicalProviderId)
+      );
     };
 
     const hasEquivalentSpecialtyModel = (
@@ -1435,8 +1440,8 @@ export async function getUnifiedModelsResponse(
             ...(typeof model.inputTokenLimit === "number"
               ? { context_length: model.inputTokenLimit }
               : {}),
-            ...(typeof (model as any).outputTokenLimit === "number"
-              ? { max_output_tokens: (model as any).outputTokenLimit }
+            ...(typeof model.outputTokenLimit === "number"
+              ? { max_output_tokens: model.outputTokenLimit }
               : {}),
             ...(visionFields || {}),
           });
@@ -1463,8 +1468,8 @@ export async function getUnifiedModelsResponse(
               ...(typeof model.inputTokenLimit === "number"
                 ? { context_length: model.inputTokenLimit }
                 : {}),
-              ...(typeof (model as any).outputTokenLimit === "number"
-                ? { max_output_tokens: (model as any).outputTokenLimit }
+              ...(typeof model.outputTokenLimit === "number"
+                ? { max_output_tokens: model.outputTokenLimit }
                 : {}),
               ...(providerVisionFields || {}),
             });
@@ -1645,6 +1650,7 @@ export async function getUnifiedModelsResponse(
           lower.includes("gpt-5.4-mini") ||
           lower.includes("gpt-5-4-mini") ||
           lower.includes("gpt-5-mini") ||
+          lower.includes("gpt-5.mini") ||
           lower.includes("gpt-4o-mini")
         )
           return "gpt-5-4-mini";
@@ -1659,6 +1665,13 @@ export async function getUnifiedModelsResponse(
           !lower.includes("lite") &&
           !lower.includes("agent")
         ) {
+          if (
+            lower.includes("3.1") ||
+            lower.includes("3-1") ||
+            lower.includes("3_pro") ||
+            lower.includes("gemini_3_pro")
+          )
+            return "gemini-3-1-pro";
           if (lower.includes("2.5") || lower.includes("2-5")) return "gemini-2-5-pro";
           return "gemini-3-1-pro";
         }

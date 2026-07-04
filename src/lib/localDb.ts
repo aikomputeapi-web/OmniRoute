@@ -533,6 +533,10 @@ export {
   deleteFreeProxy,
   clearFreeProxiesBySource,
   getFreeProxyStats,
+  recordFreeProxyTestResult,
+  setFreeProxyTier,
+  resetFreeProxyConsecutiveCounters,
+  listFreeProxiesByTier,
 } from "./db/freeProxies";
 
 export type { FreeProxyRecord, FreeProxyStats } from "./db/freeProxies";

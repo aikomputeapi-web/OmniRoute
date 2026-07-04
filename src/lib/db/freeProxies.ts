@@ -18,6 +18,9 @@ export interface FreeProxyRecord {
   poolProxyId: string | null;
   testCount: number;
   successCount: number;
+  tier: number;
+  consecutiveSuccesses: number;
+  consecutiveFailures: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,6 +52,9 @@ function mapRow(row: unknown): FreeProxyRecord {
     poolProxyId: r.pool_proxy_id != null ? String(r.pool_proxy_id) : null,
     testCount: Number(r.test_count ?? 0),
     successCount: Number(r.success_count ?? 0),
+    tier: Number(r.tier ?? 1),
+    consecutiveSuccesses: Number(r.consecutive_successes ?? 0),
+    consecutiveFailures: Number(r.consecutive_failures ?? 0),
     createdAt: String(r.created_at ?? ""),
     updatedAt: String(r.updated_at ?? ""),
   };
@@ -222,7 +228,7 @@ export async function markFreeProxyInPool(id: string, poolProxyId: string): Prom
   backupDbFile("pre-write");
 }
 
-export async function incrementFreeProxyStats(
+export async function recordFreeProxyTestResult(
   id: string,
   success: boolean,
   latencyMs: number | null,
@@ -234,13 +240,67 @@ export async function incrementFreeProxyStats(
     `UPDATE free_proxies
      SET test_count = test_count + 1,
          success_count = success_count + (CASE WHEN ? = 1 THEN 1 ELSE 0 END),
+         consecutive_successes = CASE WHEN ? = 1 THEN consecutive_successes + 1 ELSE 0 END,
+         consecutive_failures = CASE WHEN ? = 1 THEN 0 ELSE consecutive_failures + 1 END,
          latency_ms = ?,
          quality_score = ?,
          last_validated = ?,
          updated_at = ?
      WHERE id = ?`
-  ).run(success ? 1 : 0, latencyMs, qualityScore, now, now, id);
+  ).run(success ? 1 : 0, success ? 1 : 0, success ? 1 : 0, latencyMs, qualityScore, now, now, id);
   backupDbFile("pre-write");
+}
+
+export async function setFreeProxyTier(id: string, tier: number): Promise<boolean> {
+  const db = getDbInstance();
+  const now = new Date().toISOString();
+  const result = db
+    .prepare("UPDATE free_proxies SET tier = ?, updated_at = ? WHERE id = ?")
+    .run(tier, now, id);
+  backupDbFile("pre-write");
+  return result.changes > 0;
+}
+
+export async function resetFreeProxyConsecutiveCounters(id: string): Promise<void> {
+  const db = getDbInstance();
+  const now = new Date().toISOString();
+  db.prepare(
+    "UPDATE free_proxies SET consecutive_successes = 0, consecutive_failures = 0, updated_at = ? WHERE id = ?"
+  ).run(now, id);
+  backupDbFile("pre-write");
+}
+
+export async function listFreeProxiesByTier(
+  tier: number,
+  options?: {
+    country?: string;
+    limit?: number;
+    offset?: number;
+    orderBy?: string;
+  }
+): Promise<FreeProxyRecord[]> {
+  const db = getDbInstance();
+  const params: unknown[] = [tier];
+  let sql = "SELECT * FROM free_proxies WHERE tier = ?";
+
+  if (options?.country) {
+    sql += " AND UPPER(country_code) = ?";
+    params.push(options.country.toUpperCase());
+  }
+
+  sql += " ORDER BY quality_score DESC, latency_ms ASC";
+
+  if (options?.limit) {
+    sql += " LIMIT ?";
+    params.push(options.limit);
+    if (options?.offset) {
+      sql += " OFFSET ?";
+      params.push(options.offset);
+    }
+  }
+
+  const rows = db.prepare(sql).all(...params);
+  return rows.map(mapRow);
 }
 
 /**
