@@ -7,6 +7,7 @@ import { getDbInstance } from "./core";
 import { backupDbFile } from "./backup";
 import { invalidateDbCache } from "./readCache";
 import { normalizeComboRecord } from "@/lib/combos/steps";
+import { clearSessionModelHistoryForCombo } from "./contextHandoffs";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -226,6 +227,18 @@ export async function updateCombo(id: string, data: JsonRecord) {
     contextCacheProtection,
     id
   );
+
+  // Invalidate stale context-cache pins when combo targets change.
+  // Without this, sessions pinned to removed models keep routing there forever.
+  if (data.models !== undefined) {
+    const cleared = clearSessionModelHistoryForCombo(currentName);
+    if (cleared > 0) {
+      // Also clear under the new name if the combo was renamed
+      if (nextName !== currentName) {
+        clearSessionModelHistoryForCombo(nextName);
+      }
+    }
+  }
 
   invalidateDbCache("combos");
   backupDbFile("pre-write");

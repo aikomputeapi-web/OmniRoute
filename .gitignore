@@ -230,7 +230,6 @@ docs/prompts/AGENT-OWNERSHIP-PROTOCOL.omniroute-mim.md
 docs/prompts/AGENT-OWNERSHIP-PROTOCOL.omniroute-mid.md
 omniroute.md
 
-# Local runtime SQLite database and scraper cache
-storage.sqlite
-proxy_scraper_data/
-
+# mise configuration
+mise.toml
+_artifacts/

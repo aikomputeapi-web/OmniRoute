@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   buildCompatMap,
   isModelHiddenFn,
+  getDisplayModelAlias,
   effectiveNormalizeForProtocol,
   effectivePreserveForProtocol,
   anyNormalizeCompatBadge,
@@ -80,6 +81,22 @@ describe("providerPageHelpers — model-compat pure functions", () => {
     const overrideMap = buildCompatMap(overrideModels);
     expect(isModelHiddenFn("gpt-4o", customMap, overrideMap)).toBe(true);
     expect(isModelHiddenFn("unknown-model", customMap, overrideMap)).toBe(false);
+  });
+
+  it("isModelHiddenFn ignores deleted tombstones when reading visibility", () => {
+    const customMap = buildCompatMap([]);
+    const overrideMap = buildCompatMap([
+      { id: "gpt-4o-2024-11-20", isHidden: true, isDeleted: true },
+      { id: "gpt-5-mini", isHidden: true },
+    ]);
+
+    expect(isModelHiddenFn("gpt-4o-2024-11-20", customMap, overrideMap)).toBe(false);
+    expect(isModelHiddenFn("gpt-5-mini", customMap, overrideMap)).toBe(true);
+  });
+
+  it("getDisplayModelAlias ignores provider-scoped identity aliases", () => {
+    expect(getDisplayModelAlias("gpt-4o-2024-11-20", "gpt-4o-2024-11-20")).toBeNull();
+    expect(getDisplayModelAlias("gpt-5-mini", "fast-mini")).toBe("fast-mini");
   });
 
   it("effectiveNormalizeForProtocol returns correct flag", () => {

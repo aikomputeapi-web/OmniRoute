@@ -29,15 +29,14 @@ test.after(() => {
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
-test("getAllProviders returns exactly 5 providers", () => {
+test("getAllProviders returns exactly 4 providers", () => {
   const providers = getAllProviders();
-  assert.equal(providers.length, 5);
+  assert.equal(providers.length, 4);
   const ids = providers.map((p) => p.id);
   assert.ok(ids.includes("1proxy"));
   assert.ok(ids.includes("proxifly"));
   assert.ok(ids.includes("iplocate"));
-  assert.ok(ids.includes("proxypool"));
-  assert.ok(ids.includes("proxyscraper"));
+  assert.ok(ids.includes("webshare"));
 });
 
 test("getProvider returns the correct provider by id", () => {
@@ -215,11 +214,11 @@ test("ProxiflyProvider.sync fetches proxies in API-sized batches", async () => {
 
 // ── IplocateProvider ──────────────────────────────────────────────────────────
 
-test("IplocateProvider.isEnabled returns true by default", () => {
+test("IplocateProvider.isEnabled returns false by default", () => {
   const original = process.env.FREE_PROXY_IPLOCATE_ENABLED;
   delete process.env.FREE_PROXY_IPLOCATE_ENABLED;
   const p = getProvider("iplocate")!;
-  assert.equal(p.isEnabled(), true);
+  assert.equal(p.isEnabled(), false);
   if (original !== undefined) process.env.FREE_PROXY_IPLOCATE_ENABLED = original;
 });
 
