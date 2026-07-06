@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button } from "@/shared/components";
+import { useTranslations } from "next-intl";
+import { Button, ConfirmModal } from "@/shared/components";
+import SelectionToolbar from "./shared/SelectionToolbar";
 
 type ProxyTier = "tier1" | "tier2" | "tier3";
 
@@ -73,21 +75,32 @@ const EMPTY_SNAPSHOT: ProxyControlSnapshot = {
   lastSyncedAt: null,
 };
 
-const TIERS: Array<{ id: ProxyTier; label: string; description: string }> = [
+// Tier metadata resolves through the settings i18n namespace; the rule keys are
+// shared with the Overview tab's tier-rules card so the lifecycle rules have a
+// single source of truth.
+export const TIER_DEFS: Array<{
+  id: ProxyTier;
+  titleKey: string;
+  descKey: string;
+  ruleKey: string;
+}> = [
   {
     id: "tier1",
-    label: "Tier 1 — Intake",
-    description: "Newly discovered proxies being tested before verification. Deleted after 5 consecutive failures.",
+    titleKey: "proxyTierIntakeTitle",
+    descKey: "proxyTierIntakeDesc",
+    ruleKey: "proxyTierIntakeRule",
   },
   {
     id: "tier2",
-    label: "Tier 2 — Verified",
-    description: "Working proxies waiting to be proven solid before joining the active pool. Demoted to Tier 1 after 3 consecutive failures.",
+    titleKey: "proxyTierVerifiedTitle",
+    descKey: "proxyTierVerifiedDesc",
+    ruleKey: "proxyTierVerifiedRule",
   },
   {
     id: "tier3",
-    label: "Tier 3 — Active Pool",
-    description: "Active global proxy pool eligible for production traffic. A single failed test drops to Tier 2, a second drops to Tier 1.",
+    titleKey: "proxyTierActiveTitle",
+    descKey: "proxyTierActiveDesc",
+    ruleKey: "proxyTierActiveRule",
   },
 ];
 
@@ -167,6 +180,7 @@ function normalizeSnapshot(payload: any): ProxyControlSnapshot {
 function TierTable({
   label,
   description,
+  rule,
   rows,
   selected,
   onToggleRow,
@@ -174,11 +188,13 @@ function TierTable({
 }: {
   label: string;
   description: string;
+  rule: string;
   rows: NormalizedRow[];
   selected: Set<string>;
   onToggleRow: (selectionKey: string) => void;
   onToggleTier: (rows: NormalizedRow[]) => void;
 }) {
+  const t = useTranslations("settings");
   const selectedInTier = rows.filter((row) => selected.has(row.selectionKey)).length;
   const allSelected = rows.length > 0 && selectedInTier === rows.length;
   const someSelected = selectedInTier > 0 && !allSelected;
@@ -189,9 +205,15 @@ function TierTable({
         <div>
           <div className="text-sm font-semibold text-text-main">{label}</div>
           <div className="text-xs text-text-muted">{description}</div>
+          <div className="text-[11px] text-amber-500/90">
+            <span className="material-symbols-outlined text-[11px] align-middle mr-0.5" aria-hidden="true">
+              gavel
+            </span>
+            {rule}
+          </div>
         </div>
         <div className="text-xs text-text-muted">
-          {selectedInTier}/{rows.length} selected
+          {t("proxyTierSelectedOf", { selected: selectedInTier, total: rows.length })}
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -201,7 +223,7 @@ function TierTable({
               <th className="px-3 py-2 text-left w-8">
                 <input
                   type="checkbox"
-                  aria-label={`Select all ${label} proxies`}
+                  aria-label={t("proxyTierSelectAllInTier", { tier: label })}
                   checked={allSelected}
                   disabled={rows.length === 0}
                   ref={(el) => {
@@ -211,22 +233,22 @@ function TierTable({
                   className="rounded"
                 />
               </th>
-              <th className="px-3 py-2 text-left">Proxy</th>
-              <th className="px-3 py-2 text-left">Source</th>
-              <th className="px-3 py-2 text-left">Type</th>
-              <th className="px-3 py-2 text-left">Country</th>
-              <th className="px-3 py-2 text-left">Quality</th>
-              <th className="px-3 py-2 text-left">Success</th>
-              <th className="px-3 py-2 text-left">Latency</th>
-              <th className="px-3 py-2 text-left">Tests</th>
-              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColProxy")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColSource")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColType")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColCountry")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColQuality")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColSuccess")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColLatency")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColTests")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColStatus")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={10} className="px-3 py-6 text-center text-text-muted">
-                  No proxies in this tier.
+                  {t("proxyTierEmpty")}
                 </td>
               </tr>
             ) : (
@@ -268,11 +290,13 @@ function TierTable({
 }
 
 export default function ThreeTierProxyControl() {
+  const t = useTranslations("settings");
   const [snapshot, setSnapshot] = useState<ProxyControlSnapshot>(EMPTY_SNAPSHOT);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const allRows = useMemo(
     () => [...snapshot.tiers.tier1, ...snapshot.tiers.tier2, ...snapshot.tiers.tier3],
@@ -285,18 +309,18 @@ export default function ThreeTierProxyControl() {
     try {
       const res = await fetch("/api/admin/proxy-control", { cache: "no-store" });
       if (!res.ok) {
-        setActionMsg(`Failed to load proxy tiers (${res.status})`);
+        setActionMsg(t("proxyTierLoadFailed", { status: res.status }));
         return;
       }
       const body = await res.json();
       setSnapshot(normalizeSnapshot(body));
       setActionMsg(null);
     } catch (err) {
-      setActionMsg(err instanceof Error ? err.message : "Failed to load proxy tiers");
+      setActionMsg(err instanceof Error ? err.message : t("proxyTierLoadFailed", { status: 0 }));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadSnapshot();
@@ -319,7 +343,6 @@ export default function ThreeTierProxyControl() {
   }, [validKeys]);
 
   const allSelected = allRows.length > 0 && allRows.every((row) => selected.has(row.selectionKey));
-  const partiallySelected = selected.size > 0 && !allSelected;
 
   function toggleRow(selectionKey: string) {
     setSelected((prev) => {
@@ -357,12 +380,6 @@ export default function ThreeTierProxyControl() {
   async function runAction(action: "promote" | "demote" | "quarantine" | "remove") {
     const selectionKeys = Array.from(selected);
     if (selectionKeys.length === 0) return;
-    if (action === "remove") {
-      const ok = window.confirm(
-        `Delete ${selectionKeys.length} selected prox${selectionKeys.length === 1 ? "y" : "ies"}?`
-      );
-      if (!ok) return;
-    }
 
     setActing(true);
     setActionMsg(null);
@@ -374,16 +391,16 @@ export default function ThreeTierProxyControl() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setActionMsg(body?.error || `Action failed (${res.status})`);
+        setActionMsg(body?.error || t("proxyTierActionFailed", { status: res.status }));
         return;
       }
       const applied = Number(body?.applied ?? 0);
       const skipped = Number(body?.skipped ?? 0);
-      setActionMsg(`${action}: ${applied} applied, ${skipped} skipped`);
+      setActionMsg(t("proxyTierActionResult", { action, applied, skipped }));
       setSelected(new Set());
       await loadSnapshot();
     } catch (err) {
-      setActionMsg(err instanceof Error ? err.message : "Action failed");
+      setActionMsg(err instanceof Error ? err.message : t("proxyTierActionFailed", { status: 0 }));
     } finally {
       setActing(false);
     }
@@ -391,54 +408,59 @@ export default function ThreeTierProxyControl() {
 
   return (
     <div className="space-y-3 rounded border border-border bg-surface/30 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-bold text-text-main">3-Tier Proxy Control</h2>
-          <p className="text-xs text-text-muted">
-            Select and manage proxies across Tier 1 intake, Tier 2 verified, and Tier 3 active pool.
-          </p>
+          <h2 className="text-lg font-bold text-text-main">{t("proxyTierTitle")}</h2>
+          <p className="text-xs text-text-muted">{t("proxyTierDescription")}</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-xs text-text-main px-2 py-1 rounded border border-border bg-surface-alt/60">
-            <input
-              type="checkbox"
-              aria-label="Select all proxies across all tiers"
-              checked={allSelected}
-              disabled={loading || allRows.length === 0 || acting}
-              ref={(el) => {
-                if (el) el.indeterminate = partiallySelected;
-              }}
-              onChange={toggleAll}
-              className="rounded"
-            />
-            Select all
-          </label>
-          <span className="text-xs text-text-muted">
-            {selected.size}/{allRows.length} selected
-          </span>
-          <Button size="sm" variant="secondary" onClick={loadSnapshot} disabled={loading || acting}>
-            Refresh
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => void runAction("promote")} disabled={acting || selected.size === 0}>
-            Promote
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => void runAction("demote")} disabled={acting || selected.size === 0}>
-            Demote
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => void runAction("quarantine")} disabled={acting || selected.size === 0}>
-            Quarantine
+        <SelectionToolbar
+          total={allRows.length}
+          selectedCount={selected.size}
+          allSelected={allSelected}
+          onToggleSelectAll={toggleAll}
+          onDeleteSelected={() => setConfirmDelete(true)}
+          deleting={acting}
+          labels={{
+            selectAll: t("proxyTierSelectAll"),
+            deselectAll: t("proxyTierDeselectAll"),
+            deleteSelected: t("proxyTierDeleteSelected"),
+            selectedCount: t("proxyTierSelectedOf", {
+              selected: selected.size,
+              total: allRows.length,
+            }),
+          }}
+        >
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="upgrade"
+            onClick={() => void runAction("promote")}
+            disabled={acting || selected.size === 0}
+          >
+            {t("proxyTierPromote")}
           </Button>
           <Button
             size="sm"
             variant="secondary"
-            icon="delete"
-            onClick={() => void runAction("remove")}
+            icon="south"
+            onClick={() => void runAction("demote")}
             disabled={acting || selected.size === 0}
-            className="!text-red-400"
           >
-            Delete selected
+            {t("proxyTierDemote")}
           </Button>
-        </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="report"
+            onClick={() => void runAction("quarantine")}
+            disabled={acting || selected.size === 0}
+          >
+            {t("proxyTierQuarantine")}
+          </Button>
+          <Button size="sm" variant="secondary" icon="refresh" onClick={loadSnapshot} disabled={loading || acting}>
+            {t("proxyTierRefresh")}
+          </Button>
+        </SelectionToolbar>
       </div>
 
       {actionMsg && (
@@ -448,14 +470,15 @@ export default function ThreeTierProxyControl() {
       )}
 
       {loading ? (
-        <div className="px-3 py-8 text-center text-text-muted">Loading proxy tiers…</div>
+        <div className="px-3 py-8 text-center text-text-muted">{t("proxyTierLoading")}</div>
       ) : (
         <div className="space-y-3">
-          {TIERS.map((tier) => (
+          {TIER_DEFS.map((tier) => (
             <TierTable
               key={tier.id}
-              label={tier.label}
-              description={tier.description}
+              label={t(tier.titleKey)}
+              description={t(tier.descKey)}
+              rule={t(tier.ruleKey)}
               rows={snapshot.tiers[tier.id]}
               selected={selected}
               onToggleRow={toggleRow}
@@ -464,6 +487,23 @@ export default function ThreeTierProxyControl() {
           ))}
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={confirmDelete}
+        onClose={() => {
+          if (!acting) setConfirmDelete(false);
+        }}
+        onConfirm={() => {
+          setConfirmDelete(false);
+          void runAction("remove");
+        }}
+        title={t("proxyTierDeleteSelected")}
+        message={t("proxyTierConfirmDelete", { count: selected.size })}
+        confirmText={t("proxyTierDeleteSelected")}
+        cancelText={t("cancel")}
+        variant="danger"
+        loading={acting}
+      />
     </div>
   );
 }

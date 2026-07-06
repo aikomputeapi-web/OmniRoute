@@ -232,9 +232,94 @@ describe("FreePoolTab data loading", () => {
   it("displays stats when available", async () => {
     setupFetch([], { total: 7, inPool: 2, avgQuality: null, lastSyncAt: null });
     const el = renderTab();
-    await waitForCondition(() => el.textContent?.includes("Total: 7") === true);
-    expect(el.textContent).toMatch(/Total: 7/);
-    expect(el.textContent).toMatch(/In pool: 2/);
+    await waitForCondition(() => el.textContent?.includes("7") === true);
+    expect(el.textContent).toContain("proxyFreePoolTotal");
+    expect(el.textContent).toContain("proxyFreePoolInPool");
+  });
+
+  it("no longer embeds the 3-tier proxy control (moved to its own tab)", async () => {
+    const el = renderTab();
+    await waitForCondition(() => el.querySelector("[role='group']") !== null);
+    expect(el.textContent).not.toContain("proxyTierTitle");
+  });
+});
+
+describe("FreePoolTab bulk-selection toolbar", () => {
+  it("renders always-visible Select all and Delete selected buttons", async () => {
+    const el = renderTab();
+    await waitForCondition(
+      () => el.querySelector('[data-testid="selection-toolbar-select-all"]') !== null
+    );
+    expect(el.querySelector('[data-testid="selection-toolbar-select-all"]')).not.toBeNull();
+    expect(el.querySelector('[data-testid="selection-toolbar-delete-selected"]')).not.toBeNull();
+  });
+
+  it("Delete selected is disabled until a proxy is selected", async () => {
+    setupFetch([
+      { id: "p1", source: "1proxy", host: "1.2.3.4", port: 8080, type: "http", inPool: false },
+    ]);
+    const el = renderTab();
+    await waitForCondition(
+      () => el.querySelector('[data-testid="selection-toolbar-delete-selected"]') !== null
+    );
+    const deleteBtn = el.querySelector(
+      '[data-testid="selection-toolbar-delete-selected"]'
+    ) as HTMLButtonElement;
+    expect(deleteBtn.disabled).toBe(true);
+  });
+
+  it("bulk delete opens a confirm modal before deleting selected proxies", async () => {
+    const mockFetch = vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).includes("/stats")) return okJson({ stats: defaultStats });
+      if (init?.method === "DELETE") return okJson({});
+      return okJson({
+        items: [
+          { id: "p1", source: "1proxy", host: "1.2.3.4", port: 8080, type: "http", inPool: false },
+        ],
+      });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const el = renderTab();
+    await waitForCondition(
+      () => el.querySelector('[data-testid="selection-toolbar-select-all"]') !== null
+    );
+
+    const selectAllBtn = el.querySelector('[data-testid="selection-toolbar-select-all"]')!;
+    act(() => {
+      selectAllBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const deleteBtn = el.querySelector('[data-testid="selection-toolbar-delete-selected"]')!;
+    act(() => {
+      deleteBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // Confirm modal intercepts the click — no DELETE call yet.
+    expect(mockFetch.mock.calls.some(([, init]) => (init as RequestInit)?.method === "DELETE")).toBe(
+      false
+    );
+
+    await waitForCondition(() =>
+      Array.from(el.querySelectorAll("button")).some(
+        (b) => b.textContent === "proxyFreePoolDeleteSelected"
+      )
+    );
+    const confirmButtons = Array.from(el.querySelectorAll("button")).filter(
+      (b) => b.textContent === "proxyFreePoolDeleteSelected"
+    );
+    act(() => {
+      confirmButtons[confirmButtons.length - 1].dispatchEvent(
+        new MouseEvent("click", { bubbles: true })
+      );
+    });
+
+    await waitForCondition(() =>
+      mockFetch.mock.calls.some(([, init]) => (init as RequestInit)?.method === "DELETE")
+    );
+    expect(
+      mockFetch.mock.calls.some(([, init]) => (init as RequestInit)?.method === "DELETE")
+    ).toBe(true);
   });
 });
 

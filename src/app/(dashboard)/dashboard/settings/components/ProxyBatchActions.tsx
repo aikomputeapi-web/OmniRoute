@@ -27,33 +27,37 @@ export function ProxyBatchActions({
   return (
     <>
       {selectedCount > 0 && (
-        <>
-          <span className="text-xs text-text-muted">
-            {t("batchSelectedCount", { count: selectedCount })}
-          </span>
-          <Button
-            size="sm"
-            variant="secondary"
-            icon="check_circle"
-            onClick={onBatchActivate}
-            loading={batchActivating}
-            data-testid="proxy-registry-batch-activate"
-          >
-            {t("batchActivateSelected", { count: selectedCount })}
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            icon="delete"
-            onClick={onBatchDelete}
-            loading={batchDeleting}
-            className="!text-red-400 !border-red-500/30"
-            data-testid="proxy-registry-batch-delete"
-          >
-            {t("batchDeleteSelected", { count: selectedCount })}
-          </Button>
-        </>
+        <span className="text-xs text-text-muted">
+          {t("batchSelectedCount", { count: selectedCount })}
+        </span>
       )}
+      <Button
+        size="sm"
+        variant="secondary"
+        icon="check_circle"
+        onClick={onBatchActivate}
+        loading={batchActivating}
+        disabled={selectedCount === 0 || batchActivating}
+        data-testid="proxy-registry-batch-activate"
+      >
+        {selectedCount > 0
+          ? t("batchActivateSelected", { count: selectedCount })
+          : t("activateSelected")}
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        icon="delete"
+        onClick={onBatchDelete}
+        loading={batchDeleting}
+        disabled={selectedCount === 0 || batchDeleting}
+        className="!text-red-400 !border-red-500/30"
+        data-testid="proxy-registry-batch-delete"
+      >
+        {selectedCount > 0
+          ? t("batchDeleteSelected", { count: selectedCount })
+          : t("deleteSelected")}
+      </Button>
       <Button
         size="sm"
         variant="secondary"
