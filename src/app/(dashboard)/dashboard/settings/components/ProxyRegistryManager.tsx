@@ -1,27 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button, Card, Modal } from "@/shared/components";
+import { Button, Card, ConfirmModal } from "@/shared/components";
 import { useProxyBatchOperations } from "./useProxyBatchOperations";
 import { ProxyStatusBadge } from "./ProxyStatusBadge";
 import { ProxyHealthCell } from "./ProxyHealthCell";
 import { ProxyBatchActions } from "./ProxyBatchActions";
 import { ProxyCheckboxCell } from "./ProxyCheckboxCell";
-
-type ProxyItem = {
-  id: string;
-  name: string;
-  type: string;
-  host: string;
-  port: number;
-  username?: string | null;
-  password?: string | null;
-  region?: string | null;
-  notes?: string | null;
-  status?: string;
-  family?: string;
-};
+import ProxyEditModal, { type ProxyItem } from "./proxy/registry/ProxyEditModal";
+import BulkAssignModal from "./proxy/registry/BulkAssignModal";
+import BulkImportModal from "./proxy/registry/BulkImportModal";
 
 type UsageInfo = {
   count: number;
@@ -44,115 +33,7 @@ type TestResult = {
   error?: string;
 };
 
-type ParsedProxyEntry = {
-  name: string;
-  host: string;
-  port: number;
-  username: string;
-  password: string;
-  type: string;
-  region: string;
-  status: string;
-  notes: string;
-};
-
-type ParseError = {
-  line: number;
-  reason: string;
-};
-
-const EMPTY_FORM = {
-  id: "",
-  name: "",
-  type: "http",
-  host: "",
-  port: "8080",
-  username: "",
-  password: "",
-  region: "",
-  notes: "",
-  status: "active",
-  family: "auto",
-};
-
-const BULK_IMPORT_TEMPLATE = `# Proxy Bulk Import
-# Format: NAME|HOST|PORT|USERNAME|PASSWORD|TYPE|REGION|STATUS|NOTES
-# Required: NAME, HOST, PORT
-# Optional: USERNAME, PASSWORD, TYPE (http|https|socks5, default: socks5), REGION, STATUS (active|inactive, default: active), NOTES
-# Lines starting with # are ignored. Existing proxies (same host+port) will be updated.
-#
-# SOCKS5 examples:
-# proxy-us|138.99.147.218|50101|myuser|mypass|socks5|US-East|active|US production proxy
-# proxy-eu|200.234.177.62|50101|myuser|mypass|socks5|EU-West
-#
-# HTTP/HTTPS examples:
-# http-proxy|10.0.0.50|8080|||http||active|Internal HTTP proxy
-# https-proxy|proxy.example.com|443|admin|secret123|https|US|active
-`;
-
-const VALID_TYPES = new Set(["http", "https", "socks5"]);
-const VALID_STATUSES = new Set(["active", "inactive"]);
-
-function parseBulkImportText(text: string): {
-  entries: ParsedProxyEntry[];
-  errors: ParseError[];
-  skipped: number;
-} {
-  const lines = text.split("\n");
-  const entries: ParsedProxyEntry[] = [];
-  const errors: ParseError[] = [];
-  let skipped = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const raw = lines[i].trim();
-    if (!raw || raw.startsWith("#")) {
-      skipped++;
-      continue;
-    }
-
-    const parts = raw.split("|").map((p) => p.trim());
-    const [name, host, portStr, username, password, type, region, status, notes] = parts;
-    const lineNum = i + 1;
-
-    if (!name) {
-      errors.push({ line: lineNum, reason: "bulkImportErrorMissingName" });
-      continue;
-    }
-    if (!host) {
-      errors.push({ line: lineNum, reason: "bulkImportErrorMissingHost" });
-      continue;
-    }
-    const port = Number(portStr);
-    if (!portStr || isNaN(port) || port < 1 || port > 65535) {
-      errors.push({ line: lineNum, reason: "bulkImportErrorInvalidPort" });
-      continue;
-    }
-    const normalizedType = (type || "socks5").toLowerCase();
-    if (!VALID_TYPES.has(normalizedType)) {
-      errors.push({ line: lineNum, reason: "bulkImportErrorInvalidType" });
-      continue;
-    }
-    const normalizedStatus = (status || "active").toLowerCase();
-    if (!VALID_STATUSES.has(normalizedStatus)) {
-      errors.push({ line: lineNum, reason: "bulkImportErrorInvalidStatus" });
-      continue;
-    }
-
-    entries.push({
-      name,
-      host,
-      port,
-      username: username || "",
-      password: password || "",
-      type: normalizedType,
-      region: region || "",
-      status: normalizedStatus,
-      notes: notes || "",
-    });
-  }
-
-  return { entries, errors, skipped };
-}
+type ConfirmState = { kind: "batchDelete" } | { kind: "forceDelete"; id: string } | null;
 
 export default function ProxyRegistryManager() {
   const t = useTranslations("proxyRegistry");
@@ -161,8 +42,7 @@ export default function ProxyRegistryManager() {
   const [error, setError] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [editing, setEditing] = useState<ProxyItem | null>(null);
 
   const [usageById, setUsageById] = useState<Record<string, UsageInfo>>({});
   const [healthById, setHealthById] = useState<Record<string, HealthInfo>>({});
@@ -170,26 +50,9 @@ export default function ProxyRegistryManager() {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [migrating, setMigrating] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkSaving, setBulkSaving] = useState(false);
-  const [bulkScope, setBulkScope] = useState("provider");
-  const [bulkScopeIds, setBulkScopeIds] = useState("");
-  const [bulkProxyId, setBulkProxyId] = useState("");
-
-  // Bulk Import state
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
-  const [bulkImportText, setBulkImportText] = useState(BULK_IMPORT_TEMPLATE);
-  const [bulkImportParsed, setBulkImportParsed] = useState<ParsedProxyEntry[]>([]);
-  const [bulkImportErrors, setBulkImportErrors] = useState<ParseError[]>([]);
-  const [bulkImportSkipped, setBulkImportSkipped] = useState(0);
-  const [bulkImportParsedOnce, setBulkImportParsedOnce] = useState(false);
-  const [bulkImporting, setBulkImporting] = useState(false);
-  const [bulkImportResult, setBulkImportResult] = useState<{
-    created: number;
-    updated: number;
-    failed: number;
-  } | null>(null);
-
-  const editingId = useMemo(() => form.id || "", [form.id]);
+  const [confirm, setConfirm] = useState<ConfirmState>(null);
+  const [forceDeleting, setForceDeleting] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try {
@@ -264,7 +127,6 @@ export default function ProxyRegistryManager() {
   // MUST stay after the `load` const — earlier use TDZ-crashes SSR (#5918 guard).
   const {
     selectedIds,
-    setSelectedIds,
     batchDeleting,
     autoTesting,
     batchActivating,
@@ -276,10 +138,6 @@ export default function ProxyRegistryManager() {
   } = useProxyBatchOperations(load);
 
   const allSelected = items.length > 0 && items.every((item) => selectedIds.has(item.id));
-
-  const handleBatchDelete = useCallback(() => {
-    hookHandleBatchDelete(setError);
-  }, [hookHandleBatchDelete, setError]);
 
   const handleBatchActivate = useCallback(() => {
     hookHandleBatchActivate(setError, "active");
@@ -293,60 +151,14 @@ export default function ProxyRegistryManager() {
     void load();
   }, [load]);
 
-  useEffect(() => {
-    if (items.length > 0 && !bulkProxyId) {
-      setBulkProxyId(items[0].id);
-    }
-  }, [items, bulkProxyId]);
-
   const openCreate = () => {
-    setForm(EMPTY_FORM);
+    setEditing(null);
     setModalOpen(true);
   };
 
   const openEdit = (item: ProxyItem) => {
-    setForm({
-      id: item.id,
-      name: item.name || "",
-      type: item.type || "http",
-      host: item.host || "",
-      port: String(item.port || 8080),
-      username: "",
-      password: "",
-      region: item.region || "",
-      notes: item.notes || "",
-      status: item.status || "active",
-      family: item.family || "auto",
-    });
+    setEditing(item);
     setModalOpen(true);
-  };
-
-  const loadUsage = async (proxyId: string) => {
-    try {
-      const res = await fetch(
-        `/api/settings/proxies/assignments?proxyId=${encodeURIComponent(proxyId)}`
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return;
-      const rawAssignments: Array<{ scope: string; scopeId: string | null }> = Array.isArray(
-        data?.items
-      )
-        ? data.items
-        : [];
-      const seen = new Set<string>();
-      const assignments = rawAssignments.filter((a) => {
-        const key = `${a.scope}:${a.scopeId ?? ""}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      setUsageById((prev) => ({
-        ...prev,
-        [proxyId]: { count: assignments.length, assignments },
-      }));
-    } catch {
-      // ignore usage loading errors in UI
-    }
   };
 
   const handleTestProxy = async (item: ProxyItem) => {
@@ -382,57 +194,30 @@ export default function ProxyRegistryManager() {
     }
   };
 
-  const handleSave = async () => {
-    if (!(form.name || "").trim() || !(form.host || "").trim()) {
-      setError(t("errorNameHostRequired"));
-      return;
-    }
+  const forceDelete = useCallback(
+    async (id: string) => {
+      setForceDeleting(true);
+      try {
+        const forceRes = await fetch(`/api/settings/proxies?id=${encodeURIComponent(id)}&force=1`, {
+          method: "DELETE",
+        });
 
-    setSaving(true);
-    setError(null);
+        if (!forceRes.ok) {
+          const forcePayload = await forceRes.json().catch(() => ({}));
+          setError(forcePayload?.error?.message || t("errorDeleteFailed"));
+          return;
+        }
 
-    const normalizedUsername = (form.username || "").trim();
-    const normalizedPassword = (form.password || "").trim();
-
-    const payload: Record<string, unknown> = {
-      ...(editingId ? { id: editingId } : {}),
-      name: (form.name || "").trim(),
-      type: form.type,
-      host: (form.host || "").trim(),
-      port: Number(form.port || 8080),
-      region: (form.region || "").trim() || null,
-      notes: (form.notes || "").trim() || null,
-      status: form.status,
-      family: form.family || "auto",
-    };
-    if (!editingId || normalizedUsername.length > 0) {
-      payload.username = normalizedUsername;
-    }
-    if (!editingId || normalizedPassword.length > 0) {
-      payload.password = normalizedPassword;
-    }
-
-    try {
-      const res = await fetch("/api/settings/proxies", {
-        method: editingId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.error?.message || t("errorSaveFailed"));
-        return;
+        await load();
+      } catch (e: any) {
+        setError(e?.message || t("errorDeleteFailed"));
+      } finally {
+        setForceDeleting(false);
+        setConfirm(null);
       }
-
-      setModalOpen(false);
-      setForm(EMPTY_FORM);
-      await load();
-    } catch (e: any) {
-      setError(e?.message || t("errorSaveFailed"));
-    } finally {
-      setSaving(false);
-    }
-  };
+    },
+    [load, t]
+  );
 
   const handleDelete = async (id: string) => {
     try {
@@ -446,22 +231,8 @@ export default function ProxyRegistryManager() {
       }
 
       const payload = await res.json().catch(() => ({}));
-      const inUse = res.status === 409;
-      if (inUse) {
-        const ok = window.confirm(t("errorForceDeleteConfirm"));
-        if (!ok) return;
-
-        const forceRes = await fetch(`/api/settings/proxies?id=${encodeURIComponent(id)}&force=1`, {
-          method: "DELETE",
-        });
-
-        if (!forceRes.ok) {
-          const forcePayload = await forceRes.json().catch(() => ({}));
-          setError(forcePayload?.error?.message || t("errorDeleteFailed"));
-          return;
-        }
-
-        await load();
+      if (res.status === 409) {
+        setConfirm({ kind: "forceDelete", id });
         return;
       }
 
@@ -493,123 +264,34 @@ export default function ProxyRegistryManager() {
     }
   };
 
-  const handleBulkAssign = async () => {
-    setBulkSaving(true);
-    setError(null);
-    try {
-      const scopeIds =
-        bulkScope === "global"
-          ? []
-          : bulkScopeIds
-              .split(/[\n,]/g)
-              .map((part) => part.trim())
-              .filter(Boolean);
-
-      const res = await fetch("/api/settings/proxies/bulk-assign", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scope: bulkScope,
-          scopeIds,
-          proxyId: bulkProxyId || null,
-        }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(payload?.error?.message || t("errorBulkFailed"));
-        return;
-      }
-
-      setBulkOpen(false);
-      setBulkScopeIds("");
-      await load();
-    } catch (e: any) {
-      setError(e?.message || t("errorBulkFailed"));
-    } finally {
-      setBulkSaving(false);
-    }
-  };
-
-  const handleBulkImportParse = () => {
-    const { entries, errors, skipped } = parseBulkImportText(bulkImportText);
-    setBulkImportParsed(entries);
-    setBulkImportErrors(errors);
-    setBulkImportSkipped(skipped);
-    setBulkImportParsedOnce(true);
-    setBulkImportResult(null);
-  };
-
-  const handleBulkImportExecute = async () => {
-    if (bulkImportParsed.length === 0) return;
-    if (bulkImportParsed.length > 100) {
-      setError(t("bulkImportMaxExceeded"));
-      return;
-    }
-
-    setBulkImporting(true);
-    setError(null);
-    setBulkImportResult(null);
-
-    try {
-      const payload = {
-        items: bulkImportParsed.map((entry) => ({
-          name: entry.name,
-          type: entry.type,
-          host: entry.host,
-          port: entry.port,
-          username: entry.username || undefined,
-          password: entry.password || undefined,
-          region: entry.region || null,
-          notes: entry.notes || null,
-          status: entry.status as "active" | "inactive",
-        })),
-      };
-
-      const res = await fetch("/api/settings/proxies/bulk-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setError(data?.error?.message || t("errorSaveFailed"));
-        return;
-      }
-
-      setBulkImportResult({
-        created: data.created || 0,
-        updated: data.updated || 0,
-        failed: data.failed || 0,
-      });
-
-      await load();
-    } catch (e: any) {
-      setError(e?.message || t("errorSaveFailed"));
-    } finally {
-      setBulkImporting(false);
-    }
-  };
-
-  const openBulkImport = () => {
-    setBulkImportText(BULK_IMPORT_TEMPLATE);
-    setBulkImportParsed([]);
-    setBulkImportErrors([]);
-    setBulkImportSkipped(0);
-    setBulkImportParsedOnce(false);
-    setBulkImportResult(null);
-    setBulkImportOpen(true);
-  };
-
   return (
     <>
       <Card className="p-6">
-        <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
             <h3 className="text-lg font-semibold">{t("title")}</h3>
             <p className="text-sm text-text-muted">{t("description")}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="select_all"
+              onClick={() => hookToggleSelectAll(allSelected, items)}
+              disabled={loading || items.length === 0}
+              data-testid="proxy-registry-select-all"
+            >
+              {allSelected ? t("deselectAll") : t("selectAll")}
+            </Button>
+            <ProxyBatchActions
+              selectedCount={selectedIds.size}
+              batchDeleting={batchDeleting}
+              autoTesting={autoTesting}
+              batchActivating={batchActivating}
+              onBatchDelete={() => setConfirm({ kind: "batchDelete" })}
+              onBatchActivate={handleBatchActivate}
+              onAutoTestAll={handleAutoTestAll}
+            />
             <Button
               size="sm"
               variant="secondary"
@@ -624,7 +306,7 @@ export default function ProxyRegistryManager() {
               size="sm"
               variant="secondary"
               icon="upload_file"
-              onClick={openBulkImport}
+              onClick={() => setBulkImportOpen(true)}
               data-testid="proxy-registry-open-bulk-import"
             >
               {t("bulkImport")}
@@ -638,15 +320,6 @@ export default function ProxyRegistryManager() {
             >
               {t("bulkAssign")}
             </Button>
-            <ProxyBatchActions
-              selectedCount={selectedIds.size}
-              batchDeleting={batchDeleting}
-              autoTesting={autoTesting}
-              batchActivating={batchActivating}
-              onBatchDelete={handleBatchDelete}
-              onBatchActivate={handleBatchActivate}
-              onAutoTestAll={handleAutoTestAll}
-            />
             <Button
               size="sm"
               icon="add"
@@ -696,7 +369,6 @@ export default function ProxyRegistryManager() {
               </thead>
               <tbody>
                 {items.map((item) => {
-                  const usage = usageById[item.id];
                   const health = healthById[item.id];
                   return (
                     <tr key={item.id} className="border-b border-border/60">
@@ -767,358 +439,52 @@ export default function ProxyRegistryManager() {
         )}
       </Card>
 
-      <Modal
+      <ProxyEditModal
         isOpen={modalOpen}
-        onClose={() => {
-          if (!saving) setModalOpen(false);
-        }}
-        title={editingId ? t("modalEditTitle") : t("modalCreateTitle")}
-        maxWidth="lg"
-      >
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSave();
-          }}
-          autoComplete="off"
-          data-1p-ignore="true"
-        >
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelName")}</label>
-              <input
-                data-testid="proxy-registry-name-input"
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.name}
-                onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelType")}</label>
-              <select
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.type}
-                onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
-              >
-                <option value="http">HTTP</option>
-                <option value="https">HTTPS</option>
-                <option value="socks5">SOCKS5</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelFamily")}</label>
-              <select
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.family}
-                onChange={(e) => setForm((prev) => ({ ...prev, family: e.target.value }))}
-              >
-                <option value="auto">{t("familyAuto")}</option>
-                <option value="ipv4">{t("familyIpv4")}</option>
-                <option value="ipv6">{t("familyIpv6")}</option>
-              </select>
-              <p className="text-[11px] text-text-muted mt-1">{t("familyHint")}</p>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelHost")}</label>
-              <input
-                data-testid="proxy-registry-host-input"
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.host}
-                onChange={(e) => setForm((prev) => ({ ...prev, host: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelPort")}</label>
-              <input
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.port}
-                onChange={(e) => setForm((prev) => ({ ...prev, port: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelUsername")}</label>
-              <input
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.username}
-                placeholder={editingId ? t("usernamePlaceholderEdit") : ""}
-                onChange={(e) => setForm((prev) => ({ ...prev, username: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelPassword")}</label>
-              <input
-                type="password"
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.password}
-                placeholder={editingId ? t("passwordPlaceholderEdit") : ""}
-                onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelRegion")}</label>
-              <input
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.region}
-                onChange={(e) => setForm((prev) => ({ ...prev, region: e.target.value }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelStatus")}</label>
-              <select
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={form.status}
-                onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value }))}
-              >
-                <option value="active">{t("statusActive")}</option>
-                <option value="inactive">{t("statusInactive")}</option>
-              </select>
-            </div>
-          </div>
+        initial={editing}
+        onClose={() => setModalOpen(false)}
+        onSaved={load}
+        onError={setError}
+      />
 
-          <div>
-            <label className="text-xs text-text-muted mb-1 block">{t("labelNotes")}</label>
-            <textarea
-              className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-              value={form.notes}
-              onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-              rows={3}
-            />
-          </div>
-
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-            <Button size="sm" variant="secondary" onClick={() => setModalOpen(false)}>
-              {t("cancel")}
-            </Button>
-            <Button size="sm" icon="save" onClick={handleSave} loading={saving}>
-              {t("save")}
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      <Modal
+      <BulkAssignModal
         isOpen={bulkOpen}
-        onClose={() => {
-          if (!bulkSaving) setBulkOpen(false);
-        }}
-        title={t("bulkProxyAssignment")}
-        maxWidth="lg"
-      >
-        <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelScope")}</label>
-              <select
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={bulkScope}
-                onChange={(e) => setBulkScope(e.target.value)}
-              >
-                <option value="global">{t("scopeGlobal")}</option>
-                <option value="provider">{t("scopeProvider")}</option>
-                <option value="account">{t("scopeAccount")}</option>
-                <option value="combo">{t("scopeCombo")}</option>
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("labelProxy")}</label>
-              <select
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                value={bulkProxyId}
-                onChange={(e) => setBulkProxyId(e.target.value)}
-              >
-                <option value="">{t("clearAssignment")}</option>
-                {items.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} ({item.type}://{item.host}:{item.port})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+        items={items}
+        onClose={() => setBulkOpen(false)}
+        onDone={load}
+        onError={setError}
+      />
 
-          {bulkScope !== "global" && (
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">{t("bulkLabelScopeIds")}</label>
-              <textarea
-                data-testid="proxy-registry-bulk-scopeids-input"
-                className="w-full px-3 py-2 rounded bg-bg-subtle border border-border"
-                rows={5}
-                value={bulkScopeIds}
-                onChange={(e) => setBulkScopeIds(e.target.value)}
-                placeholder={t("bulkScopeIdsPlaceholder")}
-              />
-            </div>
-          )}
-
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-            <Button size="sm" variant="secondary" onClick={() => setBulkOpen(false)}>
-              {t("cancel")}
-            </Button>
-            <Button
-              size="sm"
-              icon="done_all"
-              onClick={handleBulkAssign}
-              loading={bulkSaving}
-              data-testid="proxy-registry-bulk-apply"
-            >
-              {t("bulkApply")}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Bulk Import Modal */}
-      <Modal
+      <BulkImportModal
         isOpen={bulkImportOpen}
+        onClose={() => setBulkImportOpen(false)}
+        onDone={load}
+        onError={setError}
+      />
+
+      <ConfirmModal
+        isOpen={confirm !== null}
         onClose={() => {
-          if (!bulkImporting) setBulkImportOpen(false);
+          if (!batchDeleting && !forceDeleting) setConfirm(null);
         }}
-        title={t("bulkImportTitle")}
-        maxWidth="xl"
-      >
-        <div className="flex flex-col gap-4">
-          <p className="text-sm text-text-muted">{t("bulkImportDescription")}</p>
-
-          <div>
-            <textarea
-              data-testid="proxy-registry-bulk-import-textarea"
-              className="w-full px-3 py-2 rounded bg-bg-subtle border border-border font-mono text-xs leading-relaxed"
-              rows={14}
-              value={bulkImportText}
-              onChange={(e) => {
-                setBulkImportText(e.target.value);
-                setBulkImportParsedOnce(false);
-                setBulkImportResult(null);
-              }}
-              spellCheck={false}
-            />
-          </div>
-
-          {/* Parse button */}
-          <div className="flex items-center gap-3">
-            <Button
-              size="sm"
-              variant="secondary"
-              icon="search"
-              onClick={handleBulkImportParse}
-              data-testid="proxy-registry-bulk-import-parse"
-            >
-              {t("bulkImportParse")}
-            </Button>
-
-            {bulkImportParsedOnce && (
-              <div className="flex items-center gap-3 text-xs">
-                <span className="text-emerald-400">
-                  {t("bulkImportParsed", { count: bulkImportParsed.length })}
-                </span>
-                <span className="text-text-muted">
-                  {t("bulkImportSkipped", { count: bulkImportSkipped })}
-                </span>
-                {bulkImportErrors.length > 0 && (
-                  <span className="text-red-400">
-                    {t("bulkImportParseErrors", { count: bulkImportErrors.length })}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Parse errors */}
-          {bulkImportErrors.length > 0 && (
-            <div className="max-h-28 overflow-y-auto rounded border border-red-500/30 bg-red-500/10 p-2">
-              {bulkImportErrors.map((err, idx) => (
-                <div key={idx} className="text-xs text-red-400">
-                  {t("bulkImportErrorLine", { line: err.line, reason: t(err.reason as any) })}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Preview table */}
-          {bulkImportParsedOnce && bulkImportParsed.length > 0 && (
-            <div className="overflow-x-auto max-h-48 overflow-y-auto rounded border border-border">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-left text-text-muted border-b border-border bg-bg-subtle sticky top-0">
-                    <th className="py-1.5 px-2">{t("tableName")}</th>
-                    <th className="py-1.5 px-2">{t("labelType")}</th>
-                    <th className="py-1.5 px-2">{t("labelHost")}</th>
-                    <th className="py-1.5 px-2">{t("labelPort")}</th>
-                    <th className="py-1.5 px-2">{t("labelUsername")}</th>
-                    <th className="py-1.5 px-2">{t("labelRegion")}</th>
-                    <th className="py-1.5 px-2">{t("labelStatus")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bulkImportParsed.map((entry, idx) => (
-                    <tr key={idx} className="border-b border-border/40">
-                      <td className="py-1 px-2 font-medium text-text-main">{entry.name}</td>
-                      <td className="py-1 px-2">
-                        <span className="px-1.5 py-0.5 rounded bg-bg-subtle border border-border text-[10px]">
-                          {entry.type}
-                        </span>
-                      </td>
-                      <td className="py-1 px-2 font-mono text-text-muted">{entry.host}</td>
-                      <td className="py-1 px-2 font-mono text-text-muted">{entry.port}</td>
-                      <td className="py-1 px-2 text-text-muted">{entry.username || "—"}</td>
-                      <td className="py-1 px-2 text-text-muted">{entry.region || "—"}</td>
-                      <td className="py-1 px-2">
-                        <span
-                          className={
-                            entry.status === "active" ? "text-emerald-400" : "text-text-muted"
-                          }
-                        >
-                          {entry.status === "active" ? t("statusActive") : t("statusInactive")}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* No valid entries warning */}
-          {bulkImportParsedOnce &&
-            bulkImportParsed.length === 0 &&
-            bulkImportErrors.length === 0 && (
-              <div className="text-sm text-amber-400">{t("bulkImportNoValidEntries")}</div>
-            )}
-
-          {/* Import result */}
-          {bulkImportResult && (
-            <div className="px-3 py-2 rounded border border-emerald-500/30 bg-emerald-500/10 text-sm text-emerald-400">
-              {t("bulkImportSuccess", {
-                created: bulkImportResult.created,
-                updated: bulkImportResult.updated,
-                failed: bulkImportResult.failed,
-              })}
-            </div>
-          )}
-
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
-            <Button size="sm" variant="secondary" onClick={() => setBulkImportOpen(false)}>
-              {t("cancel")}
-            </Button>
-            <Button
-              size="sm"
-              icon="upload"
-              onClick={handleBulkImportExecute}
-              loading={bulkImporting}
-              disabled={!bulkImportParsedOnce || bulkImportParsed.length === 0}
-              data-testid="proxy-registry-bulk-import-execute"
-            >
-              {bulkImporting
-                ? t("bulkImportImporting")
-                : bulkImportParsed.length > 0
-                  ? t("bulkImportImport", { count: bulkImportParsed.length })
-                  : t("bulkImport")}
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        onConfirm={() => {
+          if (confirm?.kind === "batchDelete") {
+            void hookHandleBatchDelete(setError).finally(() => setConfirm(null));
+          } else if (confirm?.kind === "forceDelete") {
+            void forceDelete(confirm.id);
+          }
+        }}
+        title={t("deleteSelected")}
+        message={
+          confirm?.kind === "forceDelete"
+            ? t("errorForceDeleteConfirm")
+            : t("bulkDeleteConfirm", { count: selectedIds.size })
+        }
+        confirmText={t("delete")}
+        cancelText={t("cancel")}
+        variant="danger"
+        loading={batchDeleting || forceDeleting}
+      />
     </>
   );
 }

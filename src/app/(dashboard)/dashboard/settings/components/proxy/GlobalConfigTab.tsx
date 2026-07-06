@@ -147,8 +147,9 @@ export default function GlobalConfigTab() {
   const deadPool = poolProxies.filter((p) => !p.alive);
 
   return (
-    <>
-      {/* Legacy Global Proxy Card */}
+    <div className="space-y-6">
+      {/* Legacy Global Proxy + Per-Key toggle, side by side */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <Card className="p-0 overflow-hidden">
         <div className="p-6">
           <div className="flex items-center gap-2 mb-4">
@@ -170,6 +171,23 @@ export default function GlobalConfigTab() {
           </div>
         </div>
       </Card>
+
+      {/* Per-Key Proxy Toggle */}
+      <Card className="p-0 overflow-hidden">
+        <div className="p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-xl text-violet-500" aria-hidden="true">key</span>
+              <div>
+                <h2 className="text-lg font-bold">{t("perKeyProxyEnabled")}</h2>
+                <p className="text-sm text-text-muted">{t("perKeyProxyEnabledDesc")}</p>
+              </div>
+            </div>
+            <Toggle checked={perKeyProxyEnabled} disabled={perKeyLoading} onChange={handleTogglePerKeyProxyEnabled} />
+          </div>
+        </div>
+      </Card>
+      </div>
 
       {/* Global Proxy Pool Card (10-20 auto-managed best proxies) */}
       <Card className="p-0 overflow-hidden">
@@ -255,22 +273,6 @@ export default function GlobalConfigTab() {
         </div>
       </Card>
 
-      {/* Per-Key Proxy Toggle */}
-      <Card className="p-0 overflow-hidden">
-        <div className="p-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-xl text-violet-500" aria-hidden="true">key</span>
-              <div>
-                <h2 className="text-lg font-bold">{t("perKeyProxyEnabled")}</h2>
-                <p className="text-sm text-text-muted">{t("perKeyProxyEnabledDesc")}</p>
-              </div>
-            </div>
-            <Toggle checked={perKeyProxyEnabled} disabled={perKeyLoading} onChange={handleTogglePerKeyProxyEnabled} />
-          </div>
-        </div>
-      </Card>
-
       {/* Bulk Healthcheck */}
       <Card className="p-0 overflow-hidden">
         <div className="p-6">
@@ -336,6 +338,6 @@ export default function GlobalConfigTab() {
       </Card>
 
       <ProxyConfigModal isOpen={proxyModalOpen} onClose={() => setProxyModalOpen(false)} level="global" levelLabel={t("globalLabel")} onSaved={loadGlobalProxy} />
-    </>
+    </div>
   );
 }

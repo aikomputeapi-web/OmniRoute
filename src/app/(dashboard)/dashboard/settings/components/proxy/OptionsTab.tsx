@@ -12,7 +12,6 @@ export default function OptionsTab() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Form values
   const [enabled, setEnabled] = useState(false);
   const [checkInterval, setCheckInterval] = useState(15);
   const [syncInterval, setSyncInterval] = useState(60);
@@ -99,23 +98,31 @@ export default function OptionsTab() {
   return (
     <div className="space-y-6">
       <Card className="p-0 overflow-hidden">
-        <div className="p-6 space-y-6">
-          <div className="flex items-center justify-between border-b border-border/50 pb-4">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-xl text-primary" aria-hidden="true">
-                settings_suggest
-              </span>
-              <div>
-                <h2 className="text-lg font-bold">{t("freeProxyOptionsTab")}</h2>
-                <p className="text-xs text-text-muted">
-                  Configure validation checks, search schedules, and filtering for free proxies
-                </p>
-              </div>
+        <div className="p-6 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-xl text-primary" aria-hidden="true">
+              settings_suggest
+            </span>
+            <div>
+              <h2 className="text-lg font-bold">{t("freeProxyOptionsTab")}</h2>
+              <p className="text-xs text-text-muted">
+                Configure validation checks, search schedules, and filtering for free proxies
+              </p>
             </div>
-            <Toggle checked={enabled} onChange={() => setEnabled(!enabled)} />
           </div>
+          <Toggle checked={enabled} onChange={() => setEnabled(!enabled)} />
+        </div>
+      </Card>
 
-          {enabled && (
+      <div className={`space-y-6 transition-opacity ${enabled ? "" : "opacity-50 pointer-events-none"}`}>
+        <Card className="p-0 overflow-hidden">
+          <div className="p-6 space-y-4">
+            <div className="flex items-center gap-2 border-b border-border/50 pb-3">
+              <span className="material-symbols-outlined text-lg text-primary" aria-hidden="true">schedule</span>
+              <h3 className="text-sm font-bold uppercase tracking-wide text-text-muted">
+                {t("proxyOptionsSectionScheduling")}
+              </h3>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold" htmlFor="checkInterval">
@@ -131,11 +138,9 @@ export default function OptionsTab() {
                   className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
                 />
                 <span className="text-xs text-text-muted">
-                  {t("freeProxyCheckIntervalDesc") ||
-                    "How often to check if proxies in the pool are still working."}
+                  {t("freeProxyCheckIntervalDesc") || "How often to check if proxies in the pool are still working."}
                 </span>
               </div>
-
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold" htmlFor="syncInterval">
                   {t("freeProxySyncIntervalLabel") || "Sync Interval (Minutes)"}
@@ -150,30 +155,22 @@ export default function OptionsTab() {
                   className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
                 />
                 <span className="text-xs text-text-muted">
-                  {t("freeProxySyncIntervalDesc") ||
-                    "How often to sync new proxies and promote the best one."}
+                  {t("freeProxySyncIntervalDesc") || "How often to sync new proxies and promote the best one."}
                 </span>
               </div>
+            </div>
+          </div>
+        </Card>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold" htmlFor="countryFilter">
-                  {t("freeProxyCountryFilterLabel") || "Country Filter"}
-                </label>
-                <input
-                  id="countryFilter"
-                  type="text"
-                  maxLength={10}
-                  placeholder="US"
-                  value={countryFilter}
-                  onChange={(e) => setCountryFilter(e.target.value)}
-                  className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono uppercase"
-                />
-                <span className="text-xs text-text-muted">
-                  {t("freeProxyCountryFilterDesc") ||
-                    "Only proxies matching this code are stored (default: US)."}
-                </span>
-              </div>
-
+        <Card className="p-0 overflow-hidden">
+          <div className="p-6 space-y-4">
+            <div className="flex items-center gap-2 border-b border-border/50 pb-3">
+              <span className="material-symbols-outlined text-lg text-primary" aria-hidden="true">verified</span>
+              <h3 className="text-sm font-bold uppercase tracking-wide text-text-muted">
+                {t("proxyOptionsSectionPromotion")}
+              </h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold" htmlFor="minQuality">
                   {t("freeProxyMinQualityLabelSettings") || "Minimum Proxy Quality"}
@@ -184,17 +181,13 @@ export default function OptionsTab() {
                   min={0}
                   max={100}
                   value={minQuality}
-                  onChange={(e) =>
-                    setMinQuality(Math.min(100, Math.max(0, Number(e.target.value))))
-                  }
+                  onChange={(e) => setMinQuality(Math.min(100, Math.max(0, Number(e.target.value))))}
                   className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
                 />
                 <span className="text-xs text-text-muted">
-                  {t("freeProxyMinQualityDesc") ||
-                    "Minimum quality score (0-100) to accept when promoting."}
+                  {t("freeProxyMinQualityDesc") || "Minimum quality score (0-100) to accept when promoting."}
                 </span>
               </div>
-
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold" htmlFor="minTests">
                   {t("freeProxyMinTestsLabelSettings") || "Minimum Validation Tests"}
@@ -209,11 +202,9 @@ export default function OptionsTab() {
                   className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
                 />
                 <span className="text-xs text-text-muted">
-                  {t("freeProxyMinTestsDesc") ||
-                    "Minimum number of validation runs before promotion."}
+                  {t("freeProxyMinTestsDesc") || "Minimum number of validation runs before promotion."}
                 </span>
               </div>
-
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold" htmlFor="minSuccessRate">
                   {t("freeProxyMinSuccessRateLabelSettings") || "Required Success Rate (%)"}
@@ -224,18 +215,33 @@ export default function OptionsTab() {
                   min={0}
                   max={100}
                   value={minSuccessRate}
-                  onChange={(e) =>
-                    setMinSuccessRate(Math.min(100, Math.max(0, Number(e.target.value))))
-                  }
+                  onChange={(e) => setMinSuccessRate(Math.min(100, Math.max(0, Number(e.target.value))))}
                   className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono"
                 />
                 <span className="text-xs text-text-muted">
-                  {t("freeProxyMinSuccessRateDesc") ||
-                    "Percent success required (100 means worked every time)."}
+                  {t("freeProxyMinSuccessRateDesc") || "Percent success required (100 means worked every time)."}
                 </span>
               </div>
-
-              <div className="flex items-center gap-3 pt-4 col-span-1 md:col-span-2">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-semibold" htmlFor="countryFilter">
+                  {t("freeProxyCountryFilterLabel") || "Country Filter"}
+                </label>
+                <input
+                  id="countryFilter"
+                  type="text"
+                  maxLength={10}
+                  placeholder="US"
+                  value={countryFilter}
+                  onChange={(e) => setCountryFilter(e.target.value)}
+                  className="px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 font-mono uppercase"
+                />
+                <span className="text-xs text-text-muted">
+                  {t("freeProxyCountryFilterDesc") || "Only proxies matching this code are stored (default: US)."}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-3 pt-2">
+              <div className="flex items-center gap-3">
                 <input
                   id="autoElevate"
                   type="checkbox"
@@ -252,25 +258,19 @@ export default function OptionsTab() {
                   </span>
                 </div>
               </div>
+            </div>
+          </div>
+        </Card>
 
-              <div className="flex items-center gap-3 pt-2 col-span-1 md:col-span-2">
-                <input
-                  id="autoRemoveDead"
-                  type="checkbox"
-                  checked={autoRemoveDead}
-                  onChange={(e) => setAutoRemoveDead(e.target.checked)}
-                  className="w-4 h-4 rounded text-primary focus:ring-primary border-black/10 dark:border-white/10"
-                />
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-sm font-semibold/80 select-none cursor-pointer" htmlFor="autoRemoveDead">
-                    Auto-Remove Dead Proxies
-                  </label>
-                  <span className="text-xs text-text-muted">
-                    Automatically remove dead/failing proxies from the global pool on each sync.
-                  </span>
-                </div>
-              </div>
-
+        <Card className="p-0 overflow-hidden">
+          <div className="p-6 space-y-4">
+            <div className="flex items-center gap-2 border-b border-border/50 pb-3">
+              <span className="material-symbols-outlined text-lg text-primary" aria-hidden="true">pool</span>
+              <h3 className="text-sm font-bold uppercase tracking-wide text-text-muted">
+                {t("proxyOptionsSectionPool")}
+              </h3>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold" htmlFor="globalPoolSize">
                   Global Pool Size
@@ -288,7 +288,6 @@ export default function OptionsTab() {
                   Number of best proxies to maintain in the global pool (5-50).
                 </span>
               </div>
-
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold" htmlFor="rotationStrategy">
                   Pool Rotation Strategy
@@ -309,27 +308,46 @@ export default function OptionsTab() {
                 </span>
               </div>
             </div>
-          )}
-
-          {error && (
-            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-400">
-              {error}
+            <div className="flex flex-col gap-3 pt-2">
+              <div className="flex items-center gap-3">
+                <input
+                  id="autoRemoveDead"
+                  type="checkbox"
+                  checked={autoRemoveDead}
+                  onChange={(e) => setAutoRemoveDead(e.target.checked)}
+                  className="w-4 h-4 rounded text-primary focus:ring-primary border-black/10 dark:border-white/10"
+                />
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-sm font-semibold/80 select-none cursor-pointer" htmlFor="autoRemoveDead">
+                    Auto-Remove Dead Proxies
+                  </label>
+                  <span className="text-xs text-text-muted">
+                    Automatically remove dead/failing proxies from the global pool on each sync.
+                  </span>
+                </div>
+              </div>
             </div>
-          )}
-
-          {success && (
-            <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-400">
-              {tc("saved") || "Saved successfully"}
-            </div>
-          )}
-
-          <div className="flex justify-end pt-4 border-t border-border/30">
-            <Button size="sm" variant="primary" onClick={handleSave} disabled={saving}>
-              {saving ? t("saving") : t("save")}
-            </Button>
           </div>
+        </Card>
+
+        {error && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-400">
+            {error}
+          </div>
+        )}
+
+        {success && (
+          <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-400">
+            {tc("saved") || "Saved successfully"}
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <Button size="sm" variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? t("saving") : t("save")}
+          </Button>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

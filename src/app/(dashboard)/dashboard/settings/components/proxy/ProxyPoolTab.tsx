@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/components";
 import { useTranslations } from "next-intl";
 import ProxyRegistryManager from "../ProxyRegistryManager";
@@ -9,10 +9,15 @@ import CloudflareRelayModal from "./CloudflareRelayModal";
 
 export default function ProxyPoolTab() {
   const t = useTranslations("settings");
-  const [relayModalOpen, setRelayModalOpen] = useState(false);
+  const [vercelModalOpen, setVercelModalOpen] = useState(false);
+  const [denoModalOpen, setDenoModalOpen] = useState(false);
+  const [cloudflareModalOpen, setCloudflareModalOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [removingBad, setRemovingBad] = useState(false);
   const [importingBest, setImportingBest] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const msgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showVercelRelay = process.env.NEXT_PUBLIC_VERCEL_RELAY_ENABLED !== "false";
   const showDenoRelay = process.env.NEXT_PUBLIC_DENO_RELAY_ENABLED !== "false";
@@ -33,55 +38,62 @@ export default function ProxyPoolTab() {
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, [menuOpen]);
 
+  useEffect(() => {
+    return () => {
+      if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
+    };
+  }, []);
+
+  const showActionMsg = useCallback((msg: string) => {
+    setActionMsg(msg);
+    if (msgTimerRef.current) clearTimeout(msgTimerRef.current);
+    msgTimerRef.current = setTimeout(() => setActionMsg(null), 5000);
+  }, []);
+
   const handleVercelDeployed = (_poolProxyId: string, relayUrl: string) => {
-    alert(`${t("vercelRelaySuccess")}: ${relayUrl}`);
+    showActionMsg(`${t("vercelRelaySuccess")}: ${relayUrl}`);
+  };
+
+  const handleCloudflareDeployed = (_poolProxyId: string, relayUrl: string) => {
+    showActionMsg(`${t("cloudflareRelaySuccess")}: ${relayUrl}`);
   };
 
   const handleRemoveBad = useCallback(async () => {
     setRemovingBad(true);
-    setActionMsg(null);
     try {
-      const res = await fetch("/api/settings/proxies/egress", {
-        method: "POST",
-      });
+      const res = await fetch("/api/settings/proxies/egress", { method: "POST" });
       if (res.ok) {
-        const data = await res.json();
-        const removed = data.report?.filter((r: any) => !r.alive)?.length || 0;
-        setActionMsg(`Validated pool: ${removed} dead proxies marked.`);
+        const data = await res.json().catch(() => null);
+        const removed = data?.report?.filter((r: { alive?: boolean }) => !r.alive)?.length ?? 0;
+        showActionMsg(t("proxyPoolMaintenanceValidated", { count: removed }));
       } else {
-        setActionMsg("Validation failed.");
+        showActionMsg(t("proxyPoolMaintenanceFailed"));
       }
     } catch {
-      setActionMsg("Validation error.");
+      showActionMsg(t("proxyPoolMaintenanceError"));
     }
     setRemovingBad(false);
-    setTimeout(() => setActionMsg(null), 5000);
-  }, []);
+  }, [showActionMsg, t]);
 
   const handleImportBestFromFree = useCallback(async () => {
     setImportingBest(true);
-    setActionMsg(null);
     try {
-      const res = await fetch("/api/settings/free-proxies/sync", {
-        method: "POST",
-      });
+      const res = await fetch("/api/settings/free-proxies/sync", { method: "POST" });
       if (res.ok) {
-        setActionMsg("Synced free proxy sources. New candidates will auto-elevate on next check cycle.");
+        showActionMsg(t("proxyPoolMaintenanceImported"));
       } else {
-        setActionMsg("Sync request sent.");
+        showActionMsg(t("proxyPoolMaintenanceFailed"));
       }
     } catch {
-      setActionMsg("Sync error.");
+      showActionMsg(t("proxyPoolMaintenanceError"));
     }
     setImportingBest(false);
-    setTimeout(() => setActionMsg(null), 5000);
-  }, []);
+  }, [showActionMsg, t]);
 
   return (
     <div className="space-y-4">
-      {/* Action Buttons Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant="secondary"
@@ -89,8 +101,9 @@ export default function ProxyPoolTab() {
             onClick={handleRemoveBad}
             loading={removingBad}
             disabled={removingBad}
+            data-testid="proxy-pool-remove-bad"
           >
-            {removingBad ? "Validating..." : "Test All & Remove Bad"}
+            {removingBad ? t("proxyPoolTestAllRemoveBadRunning") : t("proxyPoolTestAllRemoveBad")}
           </Button>
           <Button
             size="sm"
@@ -99,24 +112,89 @@ export default function ProxyPoolTab() {
             onClick={handleImportBestFromFree}
             loading={importingBest}
             disabled={importingBest}
+            data-testid="proxy-pool-import-best"
           >
-            {importingBest ? "Syncing..." : "Import Best from Free Pool"}
+            {importingBest ? t("proxyPoolImportBestRunning") : t("proxyPoolImportBest")}
           </Button>
         </div>
-        {showVercelRelay && (
-          <Button
-            size="sm"
-            variant="secondary"
-            icon="cloud_upload"
-            onClick={() => setRelayModalOpen(true)}
-          >
-            {t("vercelRelayButton")}
-          </Button>
+        {showAnyRelay && (
+          <div className="relative" ref={menuRef}>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon="rocket_launch"
+              onClick={() => setMenuOpen((v) => !v)}
+              data-testid="proxy-pool-deploy-relay"
+            >
+              {t("deployRelayButton")}
+            </Button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-surface p-1 shadow-xl">
+                {showVercelRelay && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVercelModalOpen(true);
+                      setMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm hover:bg-surface-alt"
+                  >
+                    <span
+                      className="material-symbols-outlined text-[20px] text-primary"
+                      aria-hidden="true"
+                    >
+                      cloud_upload
+                    </span>
+                    {t("vercelRelayButton")}
+                  </button>
+                )}
+                {showDenoRelay && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDenoModalOpen(true);
+                      setMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm hover:bg-surface-alt"
+                  >
+                    <span
+                      className="material-symbols-outlined text-[20px] text-primary"
+                      aria-hidden="true"
+                    >
+                      terminal
+                    </span>
+                    {t("denoRelayButton")}
+                  </button>
+                )}
+                {showCloudflareRelay && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCloudflareModalOpen(true);
+                      setMenuOpen(false);
+                    }}
+                    className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm hover:bg-surface-alt"
+                  >
+                    <span
+                      className="material-symbols-outlined text-[20px] text-primary"
+                      aria-hidden="true"
+                    >
+                      cloud
+                    </span>
+                    {t("cloudflareRelayButton")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
       {actionMsg && (
-        <div className="px-3 py-2 rounded text-sm bg-cyan-500/10 border border-cyan-500/30 text-cyan-400">
+        <div
+          className="rounded border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-400"
+          role="status"
+        >
           {actionMsg}
         </div>
       )}

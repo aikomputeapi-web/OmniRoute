@@ -2,18 +2,29 @@
 import { useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
+import OverviewTab from "./proxy/OverviewTab";
 import GlobalConfigTab from "./proxy/GlobalConfigTab";
 import ProxyPoolTab from "./proxy/ProxyPoolTab";
 import FreePoolTab from "./proxy/FreePoolTab";
+import ThreeTierProxyControl from "./proxy/ThreeTierProxyControl";
 import OptionsTab from "./proxy/OptionsTab";
 import DocumentationTab from "./proxy/DocumentationTab";
 
-type TabId = "global-config" | "proxy-pool" | "free-pool" | "options" | "documentation";
+type TabId =
+  | "overview"
+  | "global-config"
+  | "proxy-pool"
+  | "free-pool"
+  | "tier-control"
+  | "options"
+  | "documentation";
 
 const TABS: Array<{ id: TabId; labelKey: string }> = [
+  { id: "overview", labelKey: "proxyOverviewTab" },
   { id: "global-config", labelKey: "proxyGlobalConfigTab" },
   { id: "proxy-pool", labelKey: "proxyPoolTab" },
   { id: "free-pool", labelKey: "freePoolTab" },
+  { id: "tier-control", labelKey: "proxyTierControlTab" },
   { id: "options", labelKey: "proxyOptionsTab" },
   { id: "documentation", labelKey: "proxyDocumentationTab" },
 ];
@@ -26,7 +37,7 @@ export default function ProxyTab() {
 
   const activeTab = useMemo<TabId>(() => {
     const tabParam = searchParams.get("tab") as TabId | null;
-    return tabParam && TABS.some((tab) => tab.id === tabParam) ? tabParam : "global-config";
+    return tabParam && TABS.some((tab) => tab.id === tabParam) ? tabParam : "overview";
   }, [searchParams]);
 
   const handleTabChange = (tab: TabId) => {
@@ -60,9 +71,11 @@ export default function ProxyTab() {
       </div>
 
       <div role="tabpanel">
+        {activeTab === "overview" && <OverviewTab />}
         {activeTab === "global-config" && <GlobalConfigTab />}
         {activeTab === "proxy-pool" && <ProxyPoolTab />}
         {activeTab === "free-pool" && <FreePoolTab />}
+        {activeTab === "tier-control" && <ThreeTierProxyControl />}
         {activeTab === "options" && <OptionsTab />}
         {activeTab === "documentation" && <DocumentationTab />}
       </div>

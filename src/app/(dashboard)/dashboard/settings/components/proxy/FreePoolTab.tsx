@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/shared/components";
+import { Button, ConfirmModal } from "@/shared/components";
 import SourceToggleBar, {
   type SourceId,
   ALL_SOURCE_IDS,
@@ -9,7 +9,8 @@ import SourceToggleBar, {
   saveDisabledSources,
 } from "./SourceToggleBar";
 import FreeProxyRow, { type FreeProxyRowData } from "./FreeProxyRow";
-import ThreeTierProxyControl from "./ThreeTierProxyControl";
+import SelectionToolbar from "./shared/SelectionToolbar";
+import StatCard from "./shared/StatCard";
 
 type FreePoolStats = {
   total: number;
@@ -41,6 +42,8 @@ export default function FreePoolTab() {
   const [syncErrors, setSyncErrors] = useState<Record<string, string[]> | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [bulkProgressMsg, setBulkProgressMsg] = useState<string | null>(null);
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<string>("");
   const [fetchingLogs, setFetchingLogs] = useState(false);
@@ -201,7 +204,8 @@ export default function FreePoolTab() {
         headers: { "Content-Type": "application/json" },
       });
       const data = await res.json().catch(() => ({ removed: 0 }));
-      alert(`Removed ${data.removed ?? 0} dead proxy(s) from free pool.`);
+      setActionMsg(t("proxyFreePoolRemoveBadDone", { count: data.removed ?? 0 }));
+      setTimeout(() => setActionMsg(null), 5000);
       await loadData();
     } catch {}
     setRemovingBad(false);
@@ -284,13 +288,9 @@ export default function FreePoolTab() {
   // existing per-id DELETE route (DELETE /api/settings/free-proxies?id=…)
   // rather than introducing a new endpoint, chunking to keep request bodies
   // bounded and to match the MAX_BULK_IDS convention used by the providers
-  // connections hook.
+  // connections hook. Confirmation happens via ConfirmModal before this runs.
   const handleBulkDelete = async (ids: string[]) => {
     if (!ids.length) return;
-    const ok = window.confirm(
-      t("proxyFreePoolBulkDeleteConfirm", { count: ids.length })
-    );
-    if (!ok) return;
     setBulkDeleting(true);
     setBulkProgressMsg(t("proxyFreePoolBulkDeleteProgress", { done: 0, total: ids.length }));
     const CHUNK = 5;
@@ -348,6 +348,9 @@ export default function FreePoolTab() {
   };
 
   const notInPoolProxies = proxies.filter((p) => !p.inPool);
+  const eligibleIds = notInPoolProxies.map((p) => p.id);
+  const allEligibleSelected =
+    eligibleIds.length > 0 && eligibleIds.every((id) => selected.has(id));
 
   // Source colors
   const sourceColors: Record<string, string> = {
@@ -367,7 +370,39 @@ export default function FreePoolTab() {
 
   return (
     <div className="space-y-4">
-      <ThreeTierProxyControl />
+      {stats && (
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <StatCard icon="dns" label={t("proxyFreePoolTotal")} value={stats.total} />
+            <StatCard
+              icon="cloud_done"
+              label={t("proxyFreePoolInPool")}
+              value={stats.inPool}
+              tone="success"
+            />
+            <StatCard
+              icon="grade"
+              label={t("proxyFreePoolAvgQuality")}
+              value={stats.avgQuality != null ? stats.avgQuality : "—"}
+            />
+            <StatCard
+              icon="sync"
+              label={t("lastSync")}
+              value={stats.lastSyncAt ? new Date(stats.lastSyncAt).toLocaleTimeString() : "—"}
+            />
+          </div>
+          {stats.bySource && stats.bySource.length > 0 && (
+            <div className="flex gap-2 flex-wrap">
+              {stats.bySource.map((s) => (
+                <span key={s.source} className={`px-2 py-0.5 rounded text-[10px] font-medium border ${sourceColors[s.source] || "bg-surface-alt text-text-muted border-border"}`}>
+                  <span className="material-symbols-outlined text-[10px] align-middle mr-0.5">{sourceIcons[s.source] || "public"}</span>
+                  {s.source}: {s.count}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <SourceToggleBar disabledSources={disabledSources} onToggle={handleToggleSource} />
@@ -393,42 +428,78 @@ export default function FreePoolTab() {
             className="text-xs bg-surface-alt border border-border rounded px-2 py-1 w-24"
             aria-label={t("proxyFreePoolMinQualityLabel")}
           />
-          <Button size="sm" variant="secondary" icon="play_arrow" onClick={handleRunScraper} disabled={runningScraper}>
-            {runningScraper ? "Scraping..." : "Scrape Proxies"}
-          </Button>
-          <Button size="sm" variant={showLogs ? "primary" : "secondary"} icon="terminal" onClick={() => setShowLogs((prev) => !prev)}>
-            {showLogs ? "Hide Console" : "Scraper Console"}
-          </Button>
-          <Button size="sm" variant="secondary" icon="network_check" onClick={handleTestAll} disabled={testingAll}>
-            {testingAll ? "Testing..." : "Test All"}
-          </Button>
-          <Button size="sm" variant="secondary" icon="cleaning_services" onClick={handleRemoveBad} disabled={removingBad}>
-            {removingBad ? "Removing..." : "Remove Bad"}
-          </Button>
-          <Button size="sm" variant="secondary" icon="sync" onClick={handleSync} disabled={syncing}>
-            {syncing ? t("syncing") : t("proxyFreePoolSyncAll")}
-          </Button>
         </div>
       </div>
 
-      {stats && (
-        <div className="text-xs text-text-muted flex flex-col gap-2">
-          <div className="flex gap-4 flex-wrap">
-            <span>{t("proxyFreePoolTotal")}: {stats.total}</span>
-            <span>{t("proxyFreePoolInPool")}: {stats.inPool}</span>
-            {stats.avgQuality != null && <span>{t("proxyFreePoolAvgQuality")}: {stats.avgQuality}</span>}
-            {stats.lastSyncAt && <span>{t("lastSync")}: {new Date(stats.lastSyncAt).toLocaleTimeString()}</span>}
-          </div>
-          {stats.bySource && stats.bySource.length > 0 && (
-            <div className="flex gap-2 flex-wrap">
-              {stats.bySource.map((s) => (
-                <span key={s.source} className={`px-2 py-0.5 rounded text-[10px] font-medium border ${sourceColors[s.source] || "bg-surface-alt text-text-muted border-border"}`}>
-                  <span className="material-symbols-outlined text-[10px] align-middle mr-0.5">{sourceIcons[s.source] || "public"}</span>
-                  {s.source}: {s.count}
-                </span>
-              ))}
-            </div>
+      <SelectionToolbar
+        total={notInPoolProxies.length}
+        selectedCount={selected.size}
+        allSelected={allEligibleSelected}
+        onToggleSelectAll={handleToggleSelectAll}
+        onDeleteSelected={() => setConfirmBulkDelete(true)}
+        deleting={bulkDeleting}
+        labels={{
+          selectAll: t("proxyFreePoolToggleSelectAll"),
+          deselectAll: t("proxyFreePoolDeselectAll"),
+          deleteSelected: t("proxyFreePoolDeleteSelected"),
+          selectedCount: t("proxyFreePoolSelected", { count: selected.size }),
+        }}
+      >
+        <Button
+          size="sm"
+          variant="primary"
+          icon="add_circle"
+          onClick={() => handleBulkAdd(Array.from(selected))}
+          disabled={selected.size === 0 || bulkDeleting}
+        >
+          {t("proxyFreePoolAddSelected")}
+        </Button>
+        <Button size="sm" variant="secondary" icon="play_arrow" onClick={handleRunScraper} disabled={runningScraper}>
+          {runningScraper ? t("proxyFreePoolScraping") : t("proxyFreePoolScrape")}
+        </Button>
+        <Button size="sm" variant={showLogs ? "primary" : "secondary"} icon="terminal" onClick={() => setShowLogs((prev) => !prev)}>
+          {showLogs ? t("proxyFreePoolConsoleHide") : t("proxyFreePoolConsoleShow")}
+        </Button>
+        <Button size="sm" variant="secondary" icon="network_check" onClick={handleTestAll} disabled={testingAll}>
+          {testingAll ? t("proxyFreePoolTesting") : t("proxyFreePoolTestAllBtn")}
+        </Button>
+        <Button size="sm" variant="secondary" icon="cleaning_services" onClick={handleRemoveBad} disabled={removingBad}>
+          {removingBad ? t("proxyFreePoolRemoving") : t("proxyFreePoolRemoveBad")}
+        </Button>
+        <Button size="sm" variant="secondary" icon="sync" onClick={handleSync} disabled={syncing}>
+          {syncing ? t("syncing") : t("proxyFreePoolSyncAll")}
+        </Button>
+      </SelectionToolbar>
+
+      {(actionMsg || bulkProgress || bulkProgressMsg || selected.size > 0) && (
+        <div className="flex items-center gap-2 p-2 bg-primary/10 rounded border border-primary/20">
+          {selected.size > 0 && (
+            <span className="text-xs">{t("proxyFreePoolSelected", { count: selected.size })}</span>
           )}
+          {(actionMsg || bulkProgress || bulkProgressMsg) && (
+            <span className="text-xs text-text-muted">
+              {bulkProgressMsg ?? bulkProgress ?? actionMsg}
+            </span>
+          )}
+          {selected.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              disabled={bulkDeleting}
+              className="text-xs text-text-muted hover:text-text-main ml-auto"
+              aria-label={t("proxyFreePoolClearSelection")}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      )}
+
+      {notInPoolProxies.length > 0 && selected.size === 0 && (
+        <div className="flex justify-end">
+          <Button size="sm" variant="secondary" onClick={() => handleBulkAdd(notInPoolProxies.slice(0, 100).map((p) => p.id))}>
+            {t("proxyFreePoolAddVisible")}
+          </Button>
         </div>
       )}
 
@@ -437,13 +508,13 @@ export default function FreePoolTab() {
           <div className="flex items-center justify-between border-b border-white/10 pb-2">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">Proxy Scraper Console Logs</span>
+              <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">{t("proxyFreePoolConsoleTitle")}</span>
             </div>
             <div className="flex items-center gap-3">
-              {fetchingLogs && <span className="text-[10px] font-mono text-zinc-400">Updating...</span>}
+              {fetchingLogs && <span className="text-[10px] font-mono text-zinc-400">{t("proxyFreePoolConsoleUpdating")}</span>}
               <button type="button" onClick={() => { setLogs(""); void fetchLogs(); }}
-                className="text-xs font-mono text-zinc-400 hover:text-white transition-colors" aria-label="Refresh Scraper Console Logs">
-                Clear/Refresh
+                className="text-xs font-mono text-zinc-400 hover:text-white transition-colors" aria-label={t("proxyFreePoolConsoleClear")}>
+                {t("proxyFreePoolConsoleClear")}
               </button>
             </div>
           </div>
@@ -453,7 +524,7 @@ export default function FreePoolTab() {
             </div>
           )}
           <pre ref={logPreRef} className="font-mono text-xs overflow-auto bg-black text-emerald-400 p-3 h-64 shadow-inner whitespace-pre-wrap select-text scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-            {logs || (scraperError ? "" : "No log activity recorded yet. Run a scrape to begin.")}
+            {logs || (scraperError ? "" : t("proxyFreePoolConsoleEmpty"))}
           </pre>
         </div>
       )}
@@ -472,70 +543,22 @@ export default function FreePoolTab() {
         </div>
       )}
 
-      {selected.size > 0 && (
-        <div className="flex items-center gap-2 p-2 bg-primary/10 rounded border border-primary/20">
-          <span className="text-xs">{t("proxyFreePoolSelected", { count: selected.size })}</span>
-          <Button size="sm" variant="primary" onClick={() => handleBulkAdd(Array.from(selected))} disabled={bulkDeleting}>
-            {t("proxyFreePoolAddSelected")}
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            icon="delete"
-            onClick={() => void handleBulkDelete(Array.from(selected))}
-            loading={bulkDeleting}
-            disabled={bulkDeleting}
-          >
-            {t("proxyFreePoolDeleteSelected")}
-          </Button>
-          {(bulkProgress || bulkProgressMsg) && (
-            <span className="text-xs text-text-muted">{bulkProgressMsg ?? bulkProgress}</span>
-          )}
-          <button
-            type="button"
-            onClick={() => setSelected(new Set())}
-            disabled={bulkDeleting}
-            className="text-xs text-text-muted hover:text-text-main ml-1"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {notInPoolProxies.length > 0 && selected.size === 0 && (
-        <div className="flex justify-end">
-          <Button size="sm" variant="secondary" onClick={() => handleBulkAdd(notInPoolProxies.slice(0, 100).map((p) => p.id))}>
-            {t("proxyFreePoolAddVisible")}
-          </Button>
-        </div>
-      )}
-
       <div className="overflow-x-auto rounded border border-border">
         <table className="w-full text-sm">
           <thead className="bg-surface-alt text-text-muted text-xs">
             <tr>
               <th className="px-3 py-2 text-left w-8" scope="col">
-                {(() => {
-                  const eligibleIds = proxies.filter((p) => !p.inPool).map((p) => p.id);
-                  const allEligibleSelected =
-                    eligibleIds.length > 0 &&
-                    eligibleIds.every((id) => selected.has(id));
-                  const someSelected =
-                    selected.size > 0 && !allEligibleSelected;
-                  return (
-                    <input
-                      type="checkbox"
-                      aria-label={t("proxyFreePoolToggleSelectAll")}
-                      checked={allEligibleSelected}
-                      ref={(el) => {
-                        if (el) el.indeterminate = someSelected;
-                      }}
-                      onChange={handleToggleSelectAll}
-                      disabled={loading || proxies.length === 0 || bulkDeleting}
-                      className="rounded"
-                    />
-                  );
-                })()}
+                <input
+                  type="checkbox"
+                  aria-label={t("proxyFreePoolToggleSelectAll")}
+                  checked={allEligibleSelected}
+                  ref={(el) => {
+                    if (el) el.indeterminate = selected.size > 0 && !allEligibleSelected;
+                  }}
+                  onChange={handleToggleSelectAll}
+                  disabled={loading || proxies.length === 0 || bulkDeleting}
+                  className="rounded"
+                />
               </th>
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolSource")}</th>
               <th className="px-3 py-2 text-left" scope="col">{t("proxyFreePoolHostPort")}</th>
@@ -564,6 +587,23 @@ export default function FreePoolTab() {
           </tbody>
         </table>
       </div>
+
+      <ConfirmModal
+        isOpen={confirmBulkDelete}
+        onClose={() => {
+          if (!bulkDeleting) setConfirmBulkDelete(false);
+        }}
+        onConfirm={() => {
+          setConfirmBulkDelete(false);
+          void handleBulkDelete(Array.from(selected));
+        }}
+        title={t("proxyFreePoolDeleteSelected")}
+        message={t("proxyFreePoolBulkDeleteConfirm", { count: selected.size })}
+        confirmText={t("proxyFreePoolDeleteSelected")}
+        cancelText={t("cancel")}
+        variant="danger"
+        loading={bulkDeleting}
+      />
     </div>
   );
 }
