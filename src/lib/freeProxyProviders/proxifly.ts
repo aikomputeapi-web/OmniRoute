@@ -1,5 +1,6 @@
 import type { FreeProxyItem, FreeProxySyncResult, FreeProxyProvider } from "./types";
 import { isPrivateHost } from "@/shared/network/outboundUrlGuard";
+import { isProviderEnabled } from "./index";
 
 const DEFAULT_QUANTITY = 200;
 const DEFAULT_ANONYMITY = "elite";
@@ -55,7 +56,7 @@ export class ProxiflyProvider implements FreeProxyProvider {
   readonly name = "Proxifly";
 
   isEnabled(): boolean {
-    return process.env.FREE_PROXY_PROXIFLY_ENABLED !== "false";
+    return isProviderEnabled(this.id, "FREE_PROXY_PROXIFLY_ENABLED");
   }
 
   async sync(): Promise<FreeProxySyncResult> {

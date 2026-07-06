@@ -130,7 +130,8 @@ async function getJobSettings() {
     );
     const autoRemoveDead = settings.freeProxyAutoRemoveDead !== false;
     const tier1PromoteThreshold = Number(settings.freeProxyTier1PromoteThreshold) || 5;
-    const tier2DemoteThreshold = Number(settings.freeProxyTier2DemoteThreshold) || 2;
+    const tier2PromoteThreshold = Number(settings.freeProxyTier2PromoteThreshold) || 10;
+    const tier2DemoteThreshold = Number(settings.freeProxyTier2DemoteThreshold) || 3;
     const autoDistribute =
       settings.freeProxyAutoDistribute === true ||
       process.env.FREE_PROXY_AUTO_DISTRIBUTE === "true";
@@ -149,6 +150,7 @@ async function getJobSettings() {
       poolSize,
       autoRemoveDead,
       tier1PromoteThreshold,
+      tier2PromoteThreshold,
       tier2DemoteThreshold,
       liveFailThreshold,
       autoDistribute,
@@ -167,7 +169,8 @@ async function getJobSettings() {
       poolSize: 20,
       autoRemoveDead: true,
       tier1PromoteThreshold: 5,
-      tier2DemoteThreshold: 2,
+      tier2PromoteThreshold: 10,
+      tier2DemoteThreshold: 3,
       liveFailThreshold: DEFAULT_LIVE_FAIL_THRESHOLD,
       autoDistribute: process.env.FREE_PROXY_AUTO_DISTRIBUTE === "true",
     };
@@ -175,7 +178,7 @@ async function getJobSettings() {
 }
 
 function getSettingsHash(s: Awaited<ReturnType<typeof getJobSettings>>) {
-  return `${s.enabled}:${s.checkIntervalMs}:${s.syncIntervalMs}:${s.countryFilter}:${s.minQuality}:${s.minTests}:${s.minSuccessRate}:${s.autoElevate}:${s.tier1PromoteThreshold}:${s.tier2DemoteThreshold}`;
+  return `${s.enabled}:${s.checkIntervalMs}:${s.syncIntervalMs}:${s.countryFilter}:${s.minQuality}:${s.minTests}:${s.minSuccessRate}:${s.autoElevate}:${s.tier1PromoteThreshold}:${s.tier2PromoteThreshold}:${s.tier2DemoteThreshold}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +373,7 @@ async function promoteProxyToGlobal(
 // Demote a Tier 3 proxy back to Tier 1
 // ---------------------------------------------------------------------------
 
-async function demoteTier3ToTier1(registryId: string, host: string): Promise<void> {
+export async function demoteTier3ToTier1(registryId: string, host: string): Promise<void> {
   const db = getDbInstance();
   const now = new Date().toISOString();
   const freeProxy = db
@@ -769,7 +772,7 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
 // Main sync tick — syncs providers, promotes Tier 2 → Tier 3
 // ---------------------------------------------------------------------------
 
-async function runFreeProxySyncTick(settingsSnapshot?: JobSettings): Promise<void> {
+export async function runFreeProxySyncTick(settingsSnapshot?: JobSettings): Promise<void> {
   if (isSyncTickRunning) {
     log.warn("Free proxy sync tick skipped because a previous run is still in progress");
     return;
@@ -897,6 +900,15 @@ export async function reloadFreeProxyJob(
   }
 
   reloadInFlight = (async () => {
+    // Ensure persisted provider toggles are hydrated before any tick reads
+    // getEnabledProviders(); no-op once already loaded / pushed by applyRuntimeSettings.
+    try {
+      const { loadPersistedProviderToggles } = await import("@/lib/freeProxyProviders");
+      await loadPersistedProviderToggles();
+    } catch {
+      // Non-fatal: env-derived enable state remains active.
+    }
+
     const jobSettings = await getJobSettings();
     const newHash = getSettingsHash(jobSettings);
     if (newHash === currentSettingsHash) {

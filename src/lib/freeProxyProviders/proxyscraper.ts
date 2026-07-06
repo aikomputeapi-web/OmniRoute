@@ -2,6 +2,7 @@ import type { FreeProxyItem, FreeProxySyncResult, FreeProxyProvider } from "./ty
 import { isPrivateHost } from "@/shared/network/outboundUrlGuard";
 import { readFile } from "fs/promises";
 import { existsSync } from "fs";
+import { isProviderEnabled } from "./index";
 
 const DEFAULT_MAX = 1000;
 const DEFAULT_COUNTRY_FILTER = "US";
@@ -52,8 +53,10 @@ export class ProxyScraperProvider implements FreeProxyProvider {
   readonly name = "ProxyScraper";
 
   isEnabled(): boolean {
-    // Default ON — opt out with FREE_PROXY_SCRAPER_ENABLED=false
-    return process.env.FREE_PROXY_SCRAPER_ENABLED !== "false";
+    // Default ON — opt out with FREE_PROXY_SCRAPER_ENABLED=false.
+    // Operator persisted overrides (freeProxyProviderToggles) take precedence
+    // via isProviderEnabled(); env remains the cold-boot default.
+    return isProviderEnabled(this.id, "FREE_PROXY_SCRAPER_ENABLED");
   }
 
   private async getConfig() {

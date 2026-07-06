@@ -9,6 +9,7 @@ import SourceToggleBar, {
   saveDisabledSources,
 } from "./SourceToggleBar";
 import FreeProxyRow, { type FreeProxyRowData } from "./FreeProxyRow";
+import ThreeTierProxyControl from "./ThreeTierProxyControl";
 
 type FreePoolStats = {
   total: number;
@@ -366,6 +367,8 @@ export default function FreePoolTab() {
 
   return (
     <div className="space-y-4">
+      <ThreeTierProxyControl />
+
       <div className="flex flex-wrap items-center gap-3">
         <SourceToggleBar disabledSources={disabledSources} onToggle={handleToggleSource} />
         <div className="flex gap-2 ml-auto flex-wrap items-center">

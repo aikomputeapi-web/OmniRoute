@@ -18,7 +18,8 @@ export type RuntimeReloadSection =
   | "systemTransforms"
   | "authzBypass"
   | "bannedSignals"
-  | "freeProxyJob";
+  | "freeProxyJob"
+  | "freeProxyProviders";
 
 export interface RuntimeReloadChange {
   section: RuntimeReloadSection;
@@ -54,6 +55,7 @@ interface RuntimeSettingsSnapshot {
   freeProxyMinTests: number | null;
   freeProxyMinSuccessRate: number | null;
   freeProxyAutoElevate: boolean;
+  freeProxyProviderToggles: Record<string, boolean> | null;
 }
 
 // Default bypass policy: kill-switch on, `/api/mcp/` bypassable. Mirrors the
@@ -88,6 +90,7 @@ const DEFAULT_RUNTIME_SETTINGS_SNAPSHOT: RuntimeSettingsSnapshot = {
   freeProxyMinTests: 5,
   freeProxyMinSuccessRate: 100,
   freeProxyAutoElevate: true,
+  freeProxyProviderToggles: null,
 };
 
 let lastAppliedSnapshot: RuntimeSettingsSnapshot | null = null;
@@ -204,6 +207,15 @@ function normalizeNumber(value: unknown): number | null {
   return null;
 }
 
+function normalizeProviderToggles(value: unknown): Record<string, boolean> | null {
+  if (!value || typeof value !== "object") return null;
+  const out: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "boolean") out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 function normalizePayloadRules(value: unknown): unknown {
   return parseStoredJson(value, "payloadRules");
 }
@@ -277,6 +289,7 @@ export function buildRuntimeSettingsSnapshot(
     freeProxyMinTests: normalizeNumber(settings.freeProxyMinTests),
     freeProxyMinSuccessRate: normalizeNumber(settings.freeProxyMinSuccessRate),
     freeProxyAutoElevate: settings.freeProxyAutoElevate !== false,
+    freeProxyProviderToggles: normalizeProviderToggles(settings.freeProxyProviderToggles),
   };
 }
 
@@ -536,6 +549,16 @@ export async function applyRuntimeSettings(
     markChanged("modelsDevSync");
   }
 
+  // Persisted provider toggles (freeProxyProviderToggles) are honoured by the
+  // provider `isEnabled()` path via the live cache in freeProxyProviders/index.
+  // Push the fresh map before the job reload below so the reloaded scheduler
+  // tick sees the updated enable-state.
+  if (force || hasChanged(currentSnapshot.freeProxyProviderToggles, previousSnapshot.freeProxyProviderToggles)) {
+    const { setPersistedProviderToggles } = await import("@/lib/freeProxyProviders");
+    setPersistedProviderToggles(currentSnapshot.freeProxyProviderToggles ?? {});
+    markChanged("freeProxyProviders");
+  }
+
   if (
     force ||
     (hasBootstrappedSnapshot &&
@@ -546,7 +569,8 @@ export async function applyRuntimeSettings(
         currentSnapshot.freeProxyMinQuality !== previousSnapshot.freeProxyMinQuality ||
         currentSnapshot.freeProxyMinTests !== previousSnapshot.freeProxyMinTests ||
         currentSnapshot.freeProxyMinSuccessRate !== previousSnapshot.freeProxyMinSuccessRate ||
-        currentSnapshot.freeProxyAutoElevate !== previousSnapshot.freeProxyAutoElevate))
+        currentSnapshot.freeProxyAutoElevate !== previousSnapshot.freeProxyAutoElevate ||
+        currentSnapshot.freeProxyProviderToggles !== previousSnapshot.freeProxyProviderToggles))
   ) {
     const { reloadFreeProxyJob } = await import("@/lib/jobs/freeProxyJob");
     await reloadFreeProxyJob(settings);

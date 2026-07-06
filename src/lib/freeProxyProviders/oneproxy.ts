@@ -1,5 +1,6 @@
 import type { FreeProxyItem, FreeProxySyncResult, FreeProxyProvider } from "./types";
 import { isPrivateHost } from "@/shared/network/outboundUrlGuard";
+import { isProviderEnabled } from "./index";
 
 const DEFAULT_API_URL = "https://1proxy-api.aitradepulse.com/api/v1/proxies/advanced";
 const DEFAULT_MAX = 500;
@@ -32,7 +33,7 @@ export class OneproxyProvider implements FreeProxyProvider {
   private consecutiveFailures = 0;
 
   isEnabled(): boolean {
-    return process.env.FREE_PROXY_1PROXY_ENABLED !== "false";
+    return isProviderEnabled(this.id, "FREE_PROXY_1PROXY_ENABLED");
   }
 
   private getConfig() {

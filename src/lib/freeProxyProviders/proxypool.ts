@@ -1,5 +1,6 @@
 import type { FreeProxyItem, FreeProxySyncResult, FreeProxyProvider } from "./types";
 import { isPrivateHost } from "@/shared/network/outboundUrlGuard";
+import { isProviderEnabled } from "./index";
 
 const DEFAULT_API_URL = "https://api.proxyscrape.com/v2";
 const DEFAULT_MAX = 500;
@@ -11,7 +12,7 @@ export class ProxyPoolProvider implements FreeProxyProvider {
   readonly name = "ProxyPool";
 
   isEnabled(): boolean {
-    return process.env.FREE_PROXY_PROXYPOOL_ENABLED !== "false";
+    return isProviderEnabled(this.id, "FREE_PROXY_PROXYPOOL_ENABLED");
   }
 
   private getConfig() {

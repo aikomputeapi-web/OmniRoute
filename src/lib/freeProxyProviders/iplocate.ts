@@ -1,5 +1,6 @@
 import type { FreeProxyItem, FreeProxySyncResult, FreeProxyProvider } from "./types";
 import { isPrivateHost } from "@/shared/network/outboundUrlGuard";
+import { isProviderEnabled } from "./index";
 
 const DEFAULT_API_URL = "https://proxylist.geonode.com/api/proxy/list";
 const DEFAULT_MAX = 500;
@@ -28,7 +29,7 @@ export class IplocateProvider implements FreeProxyProvider {
   readonly name = "IPLocate";
 
   isEnabled(): boolean {
-    return process.env.FREE_PROXY_IPLOCATE_ENABLED !== "false";
+    return isProviderEnabled(this.id, "FREE_PROXY_IPLOCATE_ENABLED");
   }
 
   private getConfig() {
