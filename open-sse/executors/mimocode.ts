@@ -297,11 +297,10 @@ export class MimocodeExecutor extends BaseExecutor {
       }
     }
 
-    const accountProxies = credentials?.providerSpecificData?.accountProxies as
-      | AccountProxyConfig[]
-      | undefined;
-    const proxyMap = Array.isArray(accountProxies)
-      ? new Map(accountProxies.map((ap) => [ap.fingerprint, ap.proxy] as const))
+    const acctProxyConfigs = credentials?.providerSpecificData?.accountProxies as
+      AccountProxyConfig[] | undefined;
+    const proxyMap = Array.isArray(acctProxyConfigs)
+      ? new Map(acctProxyConfigs.map((ap) => [ap.fingerprint, ap.proxy] as const))
       : null;
     for (const acct of this.accounts) {
       if (proxyMap) {
