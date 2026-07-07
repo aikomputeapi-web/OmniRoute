@@ -69,6 +69,24 @@ export const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "059",
     toName: "manifest_routing",
   },
+  {
+    fromVersion: "077",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "096",
+    toName: "daily_usage_summary_api_keys",
+  },
+  {
+    fromVersion: "095",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "096",
+    toName: "daily_usage_summary_api_keys",
+  },
+  {
+    fromVersion: "096",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "100",
+    toName: "daily_usage_summary_api_keys",
+  },
 ] as const;
 
 export const LEGACY_VERSION_SLOT_MIGRATIONS = [
