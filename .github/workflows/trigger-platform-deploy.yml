@@ -1,0 +1,46 @@
+name: Trigger ai-platform Rebuild
+
+# Every push to this fork's main notifies aikomputeapi-web/ai-platform via
+# repository_dispatch (event_type: omniroute-push). Its deploy workflow clones
+# this repo's main fresh (scripts/setup-omniroute.sh), rebuilds the
+# ghcr.io/aikomputeapi-web/ai-platform/omniroute image, and redeploys — so
+# OmniRoute changes go live without needing a commit in ai-platform.
+#
+# PLATFORM_DISPATCH_TOKEN: a PAT with repo scope on aikomputeapi-web/ai-platform
+# (the default GITHUB_TOKEN is repo-scoped and cannot dispatch cross-repo).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch omniroute-push to ai-platform
+    if: github.repository == 'aikomputeapi-web/OmniRoute'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch
+        env:
+          TOKEN: ${{ secrets.PLATFORM_DISPATCH_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TOKEN" ]; then
+            echo "::error::PLATFORM_DISPATCH_TOKEN secret is not set — cannot trigger ai-platform rebuild."
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/aikomputeapi-web/ai-platform/dispatches \
+            -d "{\"event_type\":\"omniroute-push\",\"client_payload\":{\"sha\":\"$SHA\"}}")
+          if [ "$code" != "204" ]; then
+            echo "::error::Dispatch failed with HTTP $code"
+            cat /tmp/resp.txt
+            exit 1
+          fi
+          echo "Dispatched omniroute-push for $SHA to aikomputeapi-web/ai-platform."
