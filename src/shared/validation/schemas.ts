@@ -18,6 +18,17 @@ import { validateProviderSpecificData } from "./providerSpecificData";
 // Re-export validation helpers from dedicated module to avoid webpack barrel-file
 // optimization bug that truncates exports from large files.
 export { validateBody, isValidationFailure } from "./helpers";
+
+// These three were split out of this file into ./schemas/{apiV1,cli,auth} but the
+// re-export was never added here, so their sole consumers (v1/ocr, droid-settings,
+// oauth paste-credentials routes) failed to build. Re-exporting by name rather than
+// wiring the whole ./schemas/ directory, since several of its other files duplicate
+// schemas already defined directly below (e.g. v1SearchSchema, cliModelConfigSchema)
+// and a blanket `export *` would reintroduce the exact class of duplicate-declaration
+// bug just fixed elsewhere in this repo.
+export { v1OcrSchema } from "./schemas/apiV1";
+export { cliMultiModelConfigSchema } from "./schemas/cli";
+export { oauthPasteCredentialsSchema } from "./schemas/auth";
 export type { ValidationResult } from "./helpers";
 
 // ──── Provider Schemas ────
