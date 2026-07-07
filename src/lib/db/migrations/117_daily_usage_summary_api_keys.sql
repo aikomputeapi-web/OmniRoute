@@ -1,4 +1,4 @@
--- 077_daily_usage_summary_api_keys.sql
+-- 117_daily_usage_summary_api_keys.sql
 -- Add api_key_id and api_key_name to daily_usage_summary for key-level analytics beyond retention period
 
 -- 1. Add columns with safe defaults (SQLite allows NOT NULL with DEFAULT for ALTER TABLE)
