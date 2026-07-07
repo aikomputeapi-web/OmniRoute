@@ -45,6 +45,7 @@ function parseNonNegativeInt(value: string | undefined, fallback: number) {
 // historical default of 20 until an operator explicitly changes it here.
 const DB_BACKUP_SETTINGS_NAMESPACE = "dbBackup";
 const DB_BACKUP_MAX_FILES_KEY = "maxFiles";
+const DB_BACKUP_RETENTION_DAYS_KEY = "retentionDays";
 
 function getStoredDbBackupMaxFiles(): number | undefined {
   try {
@@ -79,11 +80,39 @@ export function getDbBackupMaxFiles() {
   return getStoredDbBackupMaxFiles() ?? MAX_DB_BACKUPS;
 }
 
-export function getDbBackupRetentionDays() {
-  return parseNonNegativeInt(
-    process.env.DB_BACKUP_RETENTION_DAYS,
-    DEFAULT_DB_BACKUP_RETENTION_DAYS
+function getStoredDbBackupRetentionDays(): number | undefined {
+  try {
+    const db = getDbInstance();
+    const row = db
+      .prepare("SELECT value FROM key_value WHERE namespace = ? AND key = ?")
+      .get(DB_BACKUP_SETTINGS_NAMESPACE, DB_BACKUP_RETENTION_DAYS_KEY) as
+      | { value?: string }
+      | undefined;
+    if (!row?.value) return undefined;
+    const parsed = Number.parseInt(JSON.parse(row.value), 10);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persist the operator-chosen backup retention window in days (0 = keep forever). */
+export function setDbBackupRetentionDays(value: number): void {
+  if (!Number.isInteger(value) || value < 0) return;
+  const db = getDbInstance();
+  db.prepare("INSERT OR REPLACE INTO key_value (namespace, key, value) VALUES (?, ?, ?)").run(
+    DB_BACKUP_SETTINGS_NAMESPACE,
+    DB_BACKUP_RETENTION_DAYS_KEY,
+    JSON.stringify(value)
   );
+}
+
+export function getDbBackupRetentionDays() {
+  // Precedence: DB_BACKUP_RETENTION_DAYS env override (ops) → persisted UI value → default.
+  if (process.env.DB_BACKUP_RETENTION_DAYS) {
+    return parseNonNegativeInt(process.env.DB_BACKUP_RETENTION_DAYS, DEFAULT_DB_BACKUP_RETENTION_DAYS);
+  }
+  return getStoredDbBackupRetentionDays() ?? DEFAULT_DB_BACKUP_RETENTION_DAYS;
 }
 
 function getBackupDir() {
