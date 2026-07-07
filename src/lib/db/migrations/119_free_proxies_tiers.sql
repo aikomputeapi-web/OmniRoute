@@ -1,4 +1,4 @@
--- 104_free_proxies_tiers.sql
+-- 119_free_proxies_tiers.sql
 -- Add tier tracking columns for 3-tier proxy pool system:
 --   Tier 1 (bottom): freshly scraped proxies, tested before promotion
 --   Tier 2 (middle): confirmed-working proxies, tested often

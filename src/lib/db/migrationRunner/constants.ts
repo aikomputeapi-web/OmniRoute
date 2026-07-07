@@ -69,6 +69,50 @@ export const RENAMED_MIGRATION_COMPATIBILITY = [
     toVersion: "059",
     toName: "manifest_routing",
   },
+  {
+    fromVersion: "077",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "096",
+    toName: "daily_usage_summary_api_keys",
+  },
+  {
+    fromVersion: "095",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "096",
+    toName: "daily_usage_summary_api_keys",
+  },
+  {
+    fromVersion: "096",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "100",
+    toName: "daily_usage_summary_api_keys",
+  },
+  // 2026-07: version 100 collided with the upstream-synced 100_cli_access_tokens.sql
+  // (Release v3.8.29) — bumped the local migration again rather than renumber the
+  // upstream one, matching this file's own established rename pattern above.
+  {
+    fromVersion: "100",
+    fromName: "daily_usage_summary_api_keys",
+    toVersion: "117",
+    toName: "daily_usage_summary_api_keys",
+  },
+  // 2026-07: version 101 collided with the upstream-synced 101_api_key_usage_limits.sql
+  // (Release v3.8.30) — bumped the locally-added free-proxy migration instead.
+  {
+    fromVersion: "101",
+    fromName: "free_proxies_stats",
+    toVersion: "118",
+    toName: "free_proxies_stats",
+  },
+  // 2026-07: version 104 collided with the upstream-synced
+  // 104_normalize_database_cache_size.sql (Release v3.8.36) — bumped the locally-added
+  // 3-tier proxy migration instead.
+  {
+    fromVersion: "104",
+    fromName: "free_proxies_tiers",
+    toVersion: "119",
+    toName: "free_proxies_tiers",
+  },
 ] as const;
 
 export const LEGACY_VERSION_SLOT_MIGRATIONS = [

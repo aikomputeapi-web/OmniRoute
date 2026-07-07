@@ -6,6 +6,7 @@ import {
   buildVercelRelayHeaders,
   createProxyDispatcher,
   getDefaultDispatcher,
+  isRelayType,
   normalizeProxyUrl,
   proxyConfigToUrl,
   proxyUrlForLogs,
