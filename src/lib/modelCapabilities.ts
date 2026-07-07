@@ -7,7 +7,6 @@ import { MODEL_SPECS, getModelSpec, type ModelSpec } from "@/shared/constants/mo
 import { isVisionModelId } from "@/shared/constants/visionModels";
 import { getSyncedCapability } from "@/lib/modelsDevSync";
 import { getModelContextOverride } from "@/lib/db/modelContextOverrides";
-import { isVisionModelId } from "@/shared/constants/visionModels";
 
 const TOOL_CALLING_UNSUPPORTED_PATTERNS: string[] = [];
 const REASONING_UNSUPPORTED_PATTERNS = [
@@ -286,7 +285,12 @@ function resolveVisionCapability(
   modelId: string | null,
   modalitiesInput: string[],
   modalitiesOutput: string[],
-  modelId?: string
+  // Pre-existing merge damage had this re-declared as a second `modelId` param
+  // (duplicate identifier, would not parse). Renamed only — not wired into the
+  // logic below, since which of the two call-site values should win here is
+  // a real product question, not a mechanical fix. See callers passing both
+  // `resolved.model` (modelId, above) and `lookupKey` (this one) distinctly.
+  _lookupKeyHint?: string
 ): boolean | null {
   const allModalities = [...modalitiesInput, ...modalitiesOutput].map((entry) =>
     String(entry).toLowerCase()
