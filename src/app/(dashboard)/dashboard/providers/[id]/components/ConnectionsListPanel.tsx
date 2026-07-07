@@ -371,14 +371,6 @@ export default function ConnectionsListPanel({
                   providerId === "claude" ? () => onExportClaudeAuthFile(conn.id) : undefined
                 }
                 isExportingClaudeAuthFile={exportingClaudeAuthId === conn.id}
-                onApplyGeminiAuthLocal={
-                  providerId === "gemini-cli" ? () => onOpenApplyGeminiModal(conn.id) : undefined
-                }
-                isApplyingGeminiAuthLocal={applyingGeminiAuthId === conn.id}
-                onExportGeminiAuthFile={
-                  providerId === "gemini-cli" ? () => onExportGeminiAuthFile(conn.id) : undefined
-                }
-                isExportingGeminiAuthFile={exportingGeminiAuthId === conn.id}
                 onProxy={() =>
                   onSetProxyTarget({
                     level: "key",
