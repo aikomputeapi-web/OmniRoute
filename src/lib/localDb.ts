@@ -562,6 +562,7 @@ export {
   pruneStaleFreeProxies,
   getFreeProxyStats,
   recordFreeProxyTestResult,
+  recordFreeProxySync,
   setFreeProxyTier,
   resetFreeProxyConsecutiveCounters,
   listFreeProxiesByTier,
