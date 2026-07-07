@@ -6233,7 +6233,8 @@
     "proxyDocsAutomationCard": "__MISSING__:Auto Proxy Management",
     "proxyOptionsSectionScheduling": "__MISSING__:Scheduling",
     "proxyOptionsSectionPromotion": "__MISSING__:Promotion Gates",
-    "proxyOptionsSectionPool": "__MISSING__:Pool & Rotation"
+    "proxyOptionsSectionPool": "__MISSING__:Pool & Rotation",
+    "proxyTierColPassFail": "Pass / Fail"
   },
   "contextRtk": {
     "title": "Двигун RTK",

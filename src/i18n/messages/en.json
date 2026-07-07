@@ -6186,6 +6186,7 @@
     "proxyTierColSuccess": "Success",
     "proxyTierColLatency": "Latency",
     "proxyTierColTests": "Tests",
+    "proxyTierColPassFail": "Pass / Fail",
     "proxyTierColStatus": "Status",
     "proxyTierEmpty": "No proxies in this tier.",
     "proxyTierLoadFailed": "Failed to load proxy tiers ({status})",

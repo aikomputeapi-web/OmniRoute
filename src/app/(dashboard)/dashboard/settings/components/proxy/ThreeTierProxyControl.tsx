@@ -39,6 +39,8 @@ type GlobalPoolRowWire = {
   status: string;
   updated_at: string;
   scope_id: string | null;
+  test_count?: number | null;
+  success_count?: number | null;
 };
 
 type NormalizedRow = {
@@ -54,6 +56,8 @@ type NormalizedRow = {
   latencyMs: number | null;
   successRate: number | null;
   testCount: number;
+  successCount: number | null;
+  failCount: number | null;
   consecutiveFailures: number;
   status: string;
   lastCheckedAt: string | null;
@@ -112,6 +116,20 @@ function formatLatency(value: number | null) {
   return typeof value === "number" ? `${value}ms` : "—";
 }
 
+/** Lifetime probe results as a single "passes / fails" pair (green / red). */
+function PassFailCell({ row }: { row: NormalizedRow }) {
+  if (row.successCount == null || row.failCount == null || row.testCount === 0) {
+    return <span className="text-text-muted">—</span>;
+  }
+  return (
+    <span className="font-mono whitespace-nowrap" title="Successful / failed tests">
+      <span className="text-emerald-400">{row.successCount}</span>
+      <span className="text-text-muted"> / </span>
+      <span className="text-red-400">{row.failCount}</span>
+    </span>
+  );
+}
+
 function freeProxyToRow(tier: ProxyTier, raw: FreeProxyRowWire): NormalizedRow {
   const tests = Number(raw.test_count) || 0;
   const successes = Number(raw.success_count) || 0;
@@ -128,6 +146,8 @@ function freeProxyToRow(tier: ProxyTier, raw: FreeProxyRowWire): NormalizedRow {
     latencyMs: raw.latency_ms ?? null,
     successRate: tests > 0 ? Math.round((successes / tests) * 100) : null,
     testCount: tests,
+    successCount: successes,
+    failCount: Math.max(0, tests - successes),
     consecutiveFailures: Number(raw.consecutive_failures) || 0,
     status: raw.in_pool === 1 ? "in-pool" : tier,
     lastCheckedAt: raw.last_validated ?? null,
@@ -135,6 +155,8 @@ function freeProxyToRow(tier: ProxyTier, raw: FreeProxyRowWire): NormalizedRow {
 }
 
 function globalPoolToRow(raw: GlobalPoolRowWire): NormalizedRow {
+  const tests = raw.test_count != null ? Number(raw.test_count) || 0 : null;
+  const successes = raw.success_count != null ? Number(raw.success_count) || 0 : null;
   return {
     selectionKey: `tier3:${raw.registryId}`,
     sourceId: raw.registryId,
@@ -146,8 +168,13 @@ function globalPoolToRow(raw: GlobalPoolRowWire): NormalizedRow {
     countryCode: raw.region ?? null,
     qualityScore: raw.quality_score ?? null,
     latencyMs: raw.latency_ms ?? null,
-    successRate: null,
-    testCount: 0,
+    successRate:
+      tests != null && tests > 0 && successes != null
+        ? Math.round((successes / tests) * 100)
+        : null,
+    testCount: tests ?? 0,
+    successCount: successes,
+    failCount: tests != null && successes != null ? Math.max(0, tests - successes) : null,
     consecutiveFailures: 0,
     status: raw.status || "active",
     lastCheckedAt: null,
@@ -206,7 +233,10 @@ function TierTable({
           <div className="text-sm font-semibold text-text-main">{label}</div>
           <div className="text-xs text-text-muted">{description}</div>
           <div className="text-[11px] text-amber-500/90">
-            <span className="material-symbols-outlined text-[11px] align-middle mr-0.5" aria-hidden="true">
+            <span
+              className="material-symbols-outlined text-[11px] align-middle mr-0.5"
+              aria-hidden="true"
+            >
               gavel
             </span>
             {rule}
@@ -241,19 +271,23 @@ function TierTable({
               <th className="px-3 py-2 text-left">{t("proxyTierColSuccess")}</th>
               <th className="px-3 py-2 text-left">{t("proxyTierColLatency")}</th>
               <th className="px-3 py-2 text-left">{t("proxyTierColTests")}</th>
+              <th className="px-3 py-2 text-left">{t("proxyTierColPassFail")}</th>
               <th className="px-3 py-2 text-left">{t("proxyTierColStatus")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-text-muted">
+                <td colSpan={11} className="px-3 py-6 text-center text-text-muted">
                   {t("proxyTierEmpty")}
                 </td>
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={row.selectionKey} className="border-t border-border/50 hover:bg-surface-alt/30">
+                <tr
+                  key={row.selectionKey}
+                  className="border-t border-border/50 hover:bg-surface-alt/30"
+                >
                   <td className="px-3 py-2">
                     <input
                       type="checkbox"
@@ -275,6 +309,9 @@ function TierTable({
                   <td className="px-3 py-2 text-xs">{formatLatency(row.latencyMs)}</td>
                   <td className="px-3 py-2 text-xs font-mono">{row.testCount ?? 0}</td>
                   <td className="px-3 py-2 text-xs">
+                    <PassFailCell row={row} />
+                  </td>
+                  <td className="px-3 py-2 text-xs">
                     <span className="px-2 py-0.5 rounded border border-primary/30 bg-primary/10 text-primary">
                       {row.status || row.tier}
                     </span>
@@ -293,6 +330,7 @@ export default function ThreeTierProxyControl() {
   const t = useTranslations("settings");
   const [snapshot, setSnapshot] = useState<ProxyControlSnapshot>(EMPTY_SNAPSHOT);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [activeTier, setActiveTier] = useState<ProxyTier>("tier1");
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
@@ -457,7 +495,13 @@ export default function ThreeTierProxyControl() {
           >
             {t("proxyTierQuarantine")}
           </Button>
-          <Button size="sm" variant="secondary" icon="refresh" onClick={loadSnapshot} disabled={loading || acting}>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="refresh"
+            onClick={loadSnapshot}
+            disabled={loading || acting}
+          >
             {t("proxyTierRefresh")}
           </Button>
         </SelectionToolbar>
@@ -469,11 +513,33 @@ export default function ThreeTierProxyControl() {
         </div>
       )}
 
+      {/* One sub-tab per tier so each tier gets its own full-width table. */}
+      <div className="flex gap-1 border-b border-border overflow-x-auto" role="tablist">
+        {TIER_DEFS.map((tier) => (
+          <button
+            key={tier.id}
+            role="tab"
+            aria-selected={activeTier === tier.id}
+            onClick={() => setActiveTier(tier.id)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
+              activeTier === tier.id
+                ? "border-primary text-primary"
+                : "border-transparent text-text-muted hover:text-text"
+            }`}
+          >
+            {t(tier.titleKey)}
+            <span className="ml-1.5 rounded-full bg-surface-alt px-1.5 py-0.5 text-[10px] text-text-muted">
+              {snapshot.counts[tier.id]}
+            </span>
+          </button>
+        ))}
+      </div>
+
       {loading ? (
         <div className="px-3 py-8 text-center text-text-muted">{t("proxyTierLoading")}</div>
       ) : (
-        <div className="space-y-3">
-          {TIER_DEFS.map((tier) => (
+        <div role="tabpanel">
+          {TIER_DEFS.filter((tier) => tier.id === activeTier).map((tier) => (
             <TierTable
               key={tier.id}
               label={t(tier.titleKey)}

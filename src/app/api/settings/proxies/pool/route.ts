@@ -10,9 +10,11 @@ export async function GET(request: Request) {
     const db = getDbInstance();
     const rows = db
       .prepare(
-        `SELECT p.id, p.name, p.type, p.host, p.port, p.status, p.quality_score, p.latency_ms
+        `SELECT p.id, p.name, p.type, p.host, p.port, p.status, p.quality_score, p.latency_ms,
+                fp.test_count AS test_count, fp.success_count AS success_count
          FROM proxy_registry p
          JOIN proxy_assignments pa ON pa.proxy_id = p.id
+         LEFT JOIN free_proxies fp ON fp.pool_proxy_id = p.id
          WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
          ORDER BY CAST(SUBSTR(pa.scope_id, 11) AS INTEGER) ASC`
       )
@@ -27,6 +29,8 @@ export async function GET(request: Request) {
       status: String(r.status || "active"),
       qualityScore: r.quality_score != null ? Number(r.quality_score) : null,
       latencyMs: r.latency_ms != null ? Number(r.latency_ms) : null,
+      testCount: r.test_count != null ? Number(r.test_count) : null,
+      successCount: r.success_count != null ? Number(r.success_count) : null,
       alive: !["inactive", "error", "disabled", "dead", "down"].includes(
         String(r.status || "").toLowerCase()
       ),

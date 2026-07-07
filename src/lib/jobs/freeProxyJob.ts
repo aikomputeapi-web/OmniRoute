@@ -135,8 +135,10 @@ async function getJobSettings() {
     const autoDistribute =
       settings.freeProxyAutoDistribute === true ||
       process.env.FREE_PROXY_AUTO_DISTRIBUTE === "true";
-    const liveFailThreshold =
-      Math.max(1, Number(settings.freeProxyLiveFailThreshold) || DEFAULT_LIVE_FAIL_THRESHOLD);
+    const liveFailThreshold = Math.max(
+      1,
+      Number(settings.freeProxyLiveFailThreshold) || DEFAULT_LIVE_FAIL_THRESHOLD
+    );
 
     return {
       enabled,
@@ -458,8 +460,15 @@ export async function distributeProxiesToAccounts(): Promise<{
     totalAssigned += applied;
     totalUnassigned += plan.unassigned.length;
     log.info(
-      { provider, connections: conns.length, assigned: applied, unassigned: plan.unassigned.length },
-      plan.sharingRisk ? "Auto-distribute plan had sharing risk" : "Auto-distribute complete for provider"
+      {
+        provider,
+        connections: conns.length,
+        assigned: applied,
+        unassigned: plan.unassigned.length,
+      },
+      plan.sharingRisk
+        ? "Auto-distribute plan had sharing risk"
+        : "Auto-distribute complete for provider"
     );
   }
 
@@ -486,281 +495,293 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
     log.info("Free proxy check tick started");
     const settings = settingsSnapshot ?? (await getJobSettings());
 
-  // ================================================================
-  // 0. Pull recent real-request failures from proxyLogger and
-  //    fast-demote Tier 3 / Tier 2 proxies that are failing live
-  //    traffic before spending time on periodic probes.
-  // ================================================================
-  let liveFailures: Map<string, number>;
-  try {
-    liveFailures = getRecentProxyFailures(LIVE_FAIL_WINDOW_MS);
-    if (liveFailures.size > 0) {
-      log.info(
-        { failingProxies: liveFailures.size, windowMs: LIVE_FAIL_WINDOW_MS },
-        "Found proxies with recent real-request failures"
-      );
+    // ================================================================
+    // 0. Pull recent real-request failures from proxyLogger and
+    //    fast-demote Tier 3 / Tier 2 proxies that are failing live
+    //    traffic before spending time on periodic probes.
+    // ================================================================
+    let liveFailures: Map<string, number>;
+    try {
+      liveFailures = getRecentProxyFailures(LIVE_FAIL_WINDOW_MS);
+      if (liveFailures.size > 0) {
+        log.info(
+          { failingProxies: liveFailures.size, windowMs: LIVE_FAIL_WINDOW_MS },
+          "Found proxies with recent real-request failures"
+        );
+      }
+    } catch (err) {
+      liveFailures = new Map();
+      log.warn({ err }, "Failed to read recent proxy failures (non-fatal)");
     }
-  } catch (err) {
-    liveFailures = new Map();
-    log.warn({ err }, "Failed to read recent proxy failures (non-fatal)");
-  }
-  const liveFailThreshold = settings.liveFailThreshold;
+    const liveFailThreshold = settings.liveFailThreshold;
 
-  // ================================================================
-  // 1. Test Tier 3 (global pool proxies) — any failure = demote to Tier 2
-  //    PARALLELIZED (was sequential). Tier 3 is the hot path used for
-  //    real traffic; the serial loop made each tick slow and increased
-  //    the chance of the overlap guard kicking in.
-  // ================================================================
-  try {
-    const db = getDbInstance();
-    const poolProxies = db
-      .prepare(
-        `SELECT pr.id, pr.type, pr.host, pr.port FROM proxy_registry pr
+    // ================================================================
+    // 1. Test Tier 3 (global pool proxies) — any failure = demote to Tier 2
+    //    PARALLELIZED (was sequential). Tier 3 is the hot path used for
+    //    real traffic; the serial loop made each tick slow and increased
+    //    the chance of the overlap guard kicking in.
+    // ================================================================
+    try {
+      const db = getDbInstance();
+      const poolProxies = db
+        .prepare(
+          `SELECT pr.id, pr.type, pr.host, pr.port FROM proxy_registry pr
          JOIN proxy_assignments pa ON pa.proxy_id = pr.id
          WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
            AND pr.source = 'auto-us'`
-      )
-      .all() as Array<{ id: string; type: string; host: string; port: number }>;
+        )
+        .all() as Array<{ id: string; type: string; host: string; port: number }>;
 
-    if (poolProxies.length > 0) {
-      log.info({ count: poolProxies.length }, "Testing Tier 3 (global pool) proxies");
+      if (poolProxies.length > 0) {
+        log.info({ count: poolProxies.length }, "Testing Tier 3 (global pool) proxies");
 
-      const chunk = <T>(arr: T[], size: number): T[][] =>
-        Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
-          arr.slice(i * size, i * size + size)
-        );
+        const chunk = <T>(arr: T[], size: number): T[][] =>
+          Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
+            arr.slice(i * size, i * size + size)
+          );
 
-      const chunks = chunk(poolProxies, 50);
-      for (const batch of chunks) {
-        await Promise.all(
-          batch.map(async (pp) => {
-            // Fast-path demote on accumulated real-request failures (no probe needed).
-            const key = `${pp.host}:${pp.port}`;
-            if ((liveFailures.get(key) ?? 0) >= liveFailThreshold) {
-              await demoteTier3ToTier1(pp.id, pp.host);
-              await emitProxyAlert("proxy.demoted", {
-                tier: 3,
-                host: pp.host,
-                port: pp.port,
-                reason: "live-request-failures",
-                failures: liveFailures.get(key),
-              });
-              return;
-            }
-            try {
-              const url = `${pp.type}://${pp.host}:${pp.port}`;
-              const { ok } = await testProxyMultiTarget(url, 5000);
-              if (!ok) {
+        const chunks = chunk(poolProxies, 50);
+        for (const batch of chunks) {
+          await Promise.all(
+            batch.map(async (pp) => {
+              // Fast-path demote on accumulated real-request failures (no probe needed).
+              const key = `${pp.host}:${pp.port}`;
+              if ((liveFailures.get(key) ?? 0) >= liveFailThreshold) {
                 await demoteTier3ToTier1(pp.id, pp.host);
                 await emitProxyAlert("proxy.demoted", {
                   tier: 3,
                   host: pp.host,
                   port: pp.port,
-                  reason: "liveness-failed",
+                  reason: "live-request-failures",
+                  failures: liveFailures.get(key),
                 });
+                return;
               }
-            } catch {
-              await demoteTier3ToTier1(pp.id, pp.host);
-            }
-          })
-        );
-      }
+              try {
+                const url = `${pp.type}://${pp.host}:${pp.port}`;
+                const { ok } = await testProxyMultiTarget(url, 5000);
+                if (!ok) {
+                  await demoteTier3ToTier1(pp.id, pp.host);
+                  await emitProxyAlert("proxy.demoted", {
+                    tier: 3,
+                    host: pp.host,
+                    port: pp.port,
+                    reason: "liveness-failed",
+                  });
+                }
+              } catch {
+                await demoteTier3ToTier1(pp.id, pp.host);
+              }
+            })
+          );
+        }
 
-      // Low-live-pool alert (rate-limited).
-      const remaining = db
-        .prepare(
-          `SELECT COUNT(*) as n FROM proxy_registry pr
+        // Low-live-pool alert (rate-limited).
+        const remaining = db
+          .prepare(
+            `SELECT COUNT(*) as n FROM proxy_registry pr
            JOIN proxy_assignments pa ON pa.proxy_id = pr.id
            WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
              AND pr.source = 'auto-us'`
-        )
-        .get() as { n: number };
-      const liveCount = Number(remaining?.n ?? 0);
-      if (liveCount < LOW_POOL_THRESHOLD && Date.now() - lastLowPoolAlertAt > LOW_POOL_ALERT_COOLDOWN_MS) {
-        lastLowPoolAlertAt = Date.now();
-        log.warn({ liveCount, threshold: LOW_POOL_THRESHOLD }, "Live proxy pool below threshold");
-        await emitProxyAlert("proxy.pool-low", { liveCount, threshold: LOW_POOL_THRESHOLD });
+          )
+          .get() as { n: number };
+        const liveCount = Number(remaining?.n ?? 0);
+        if (
+          liveCount < LOW_POOL_THRESHOLD &&
+          Date.now() - lastLowPoolAlertAt > LOW_POOL_ALERT_COOLDOWN_MS
+        ) {
+          lastLowPoolAlertAt = Date.now();
+          log.warn({ liveCount, threshold: LOW_POOL_THRESHOLD }, "Live proxy pool below threshold");
+          await emitProxyAlert("proxy.pool-low", { liveCount, threshold: LOW_POOL_THRESHOLD });
+        }
       }
+    } catch (err) {
+      log.warn({ err }, "Tier 3 validation failed (non-fatal)");
     }
-  } catch (err) {
-    log.warn({ err }, "Tier 3 validation failed (non-fatal)");
-  }
 
-  // Also run validateProxyPool for status tracking in the registry
-  try {
-    const report = await validateProxyPool();
-    const alive = report.filter((r) => r.alive).length;
-    const dead = report.filter((r) => !r.alive).length;
-    if (report.length > 0) {
-      log.info({ total: report.length, alive, dead }, "Proxy pool status validation complete");
+    // Also run validateProxyPool for status tracking in the registry
+    try {
+      const report = await validateProxyPool();
+      const alive = report.filter((r) => r.alive).length;
+      const dead = report.filter((r) => !r.alive).length;
+      if (report.length > 0) {
+        log.info({ total: report.length, alive, dead }, "Proxy pool status validation complete");
+      }
+    } catch (err) {
+      log.warn({ err }, "Proxy pool status validation failed (non-fatal)");
     }
-  } catch (err) {
-    log.warn({ err }, "Proxy pool status validation failed (non-fatal)");
-  }
 
-  // ================================================================
-  // 2. Test Tier 2 (middle pool) — demote to Tier 1 on failure streak
-  // ================================================================
-  try {
-    const db = getDbInstance();
-    const query =
-      settings.countryFilter === "ALL"
-        ? "SELECT id, type, host, port, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0"
-        : "SELECT id, type, host, port, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0 AND UPPER(country_code) = ?";
+    // ================================================================
+    // 2. Test Tier 2 (middle pool) — demote to Tier 1 on failure streak
+    // ================================================================
+    try {
+      const db = getDbInstance();
+      const query =
+        settings.countryFilter === "ALL"
+          ? "SELECT id, type, host, port, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0"
+          : "SELECT id, type, host, port, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0 AND UPPER(country_code) = ?";
 
-    const params = settings.countryFilter === "ALL" ? [] : [settings.countryFilter];
-    const tier2Proxies = db.prepare(query).all(...params) as Array<{
-      id: string;
-      type: string;
-      host: string;
-      port: number;
-      consecutive_failures: number;
-    }>;
+      const params = settings.countryFilter === "ALL" ? [] : [settings.countryFilter];
+      const tier2Proxies = db.prepare(query).all(...params) as Array<{
+        id: string;
+        type: string;
+        host: string;
+        port: number;
+        consecutive_failures: number;
+      }>;
 
-    if (tier2Proxies.length > 0) {
-      log.info({ count: tier2Proxies.length }, "Testing Tier 2 (middle pool) proxies");
+      if (tier2Proxies.length > 0) {
+        log.info({ count: tier2Proxies.length }, "Testing Tier 2 (middle pool) proxies");
 
-      const { recordFreeProxyTestResult, setFreeProxyTier, resetFreeProxyConsecutiveCounters } =
-        await import("@/lib/db/freeProxies");
+        const { recordFreeProxyTestResult, setFreeProxyTier, resetFreeProxyConsecutiveCounters } =
+          await import("@/lib/db/freeProxies");
 
-      const chunk = <T>(arr: T[], size: number): T[][] =>
-        Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
-          arr.slice(i * size, i * size + size)
-        );
+        const chunk = <T>(arr: T[], size: number): T[][] =>
+          Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
+            arr.slice(i * size, i * size + size)
+          );
 
-      const chunks = chunk(tier2Proxies, 50);
-      for (const batch of chunks) {
-        await Promise.all(
-          batch.map(async (item) => {
-            // Fast-demote on accumulated real-request failures (no probe needed).
-            const key = `${item.host}:${item.port}`;
-            if ((liveFailures.get(key) ?? 0) >= liveFailThreshold) {
-              await setFreeProxyTier(item.id, 1);
-              await resetFreeProxyConsecutiveCounters(item.id);
-              log.info({ host: item.host }, "Tier 2 proxy demoted to Tier 1 (live-request failures)");
-              await emitProxyAlert("proxy.demoted", {
-                tier: 2,
-                host: item.host,
-                port: item.port,
-                reason: "live-request-failures",
-              });
-              return;
-            }
-            const url = `${item.type}://${item.host}:${item.port}`;
-            try {
-              const { ok, latencyMs } = await testProxyMultiTarget(url, 5000);
-              const quality = computeQualityScore(latencyMs);
-              if (ok) {
-                await recordFreeProxyTestResult(item.id, true, latencyMs, quality);
-              } else {
+        const chunks = chunk(tier2Proxies, 50);
+        for (const batch of chunks) {
+          await Promise.all(
+            batch.map(async (item) => {
+              // Fast-demote on accumulated real-request failures (no probe needed).
+              const key = `${item.host}:${item.port}`;
+              if ((liveFailures.get(key) ?? 0) >= liveFailThreshold) {
+                await setFreeProxyTier(item.id, 1);
+                await resetFreeProxyConsecutiveCounters(item.id);
+                log.info(
+                  { host: item.host },
+                  "Tier 2 proxy demoted to Tier 1 (live-request failures)"
+                );
+                await emitProxyAlert("proxy.demoted", {
+                  tier: 2,
+                  host: item.host,
+                  port: item.port,
+                  reason: "live-request-failures",
+                });
+                return;
+              }
+              const url = `${item.type}://${item.host}:${item.port}`;
+              try {
+                const { ok, latencyMs } = await testProxyMultiTarget(url, 5000);
+                const quality = computeQualityScore(latencyMs);
+                if (ok) {
+                  await recordFreeProxyTestResult(item.id, true, latencyMs, quality);
+                } else {
+                  const newFailCount = item.consecutive_failures + 1;
+                  await recordFreeProxyTestResult(item.id, false, latencyMs, quality);
+                  if (newFailCount >= settings.tier2DemoteThreshold) {
+                    await setFreeProxyTier(item.id, 1);
+                    await resetFreeProxyConsecutiveCounters(item.id);
+                    log.info(
+                      { host: item.host },
+                      "Tier 2 proxy demoted to Tier 1 (failure streak)"
+                    );
+                  }
+                }
+              } catch (err) {
+                await recordFreeProxyTestResult(item.id, false, null, 0);
                 const newFailCount = item.consecutive_failures + 1;
-                await recordFreeProxyTestResult(item.id, false, latencyMs, quality);
                 if (newFailCount >= settings.tier2DemoteThreshold) {
                   await setFreeProxyTier(item.id, 1);
                   await resetFreeProxyConsecutiveCounters(item.id);
-                  log.info({ host: item.host }, "Tier 2 proxy demoted to Tier 1 (failure streak)");
+                  log.info({ host: item.host }, "Tier 2 proxy demoted to Tier 1 (error streak)");
                 }
               }
-            } catch (err) {
-              await recordFreeProxyTestResult(item.id, false, null, 0);
-              const newFailCount = item.consecutive_failures + 1;
-              if (newFailCount >= settings.tier2DemoteThreshold) {
-                await setFreeProxyTier(item.id, 1);
-                await resetFreeProxyConsecutiveCounters(item.id);
-                log.info({ host: item.host }, "Tier 2 proxy demoted to Tier 1 (error streak)");
-              }
-            }
-          })
-        );
+            })
+          );
+        }
       }
+    } catch (err) {
+      log.warn({ err }, "Tier 2 proxy testing failed (non-fatal)");
     }
-  } catch (err) {
-    log.warn({ err }, "Tier 2 proxy testing failed (non-fatal)");
-  }
 
-  // ================================================================
-  // 3. Test Tier 1 (bottom pool) — promote to Tier 2 on success streak,
-  //    delete on 5 consecutive failures
-  // ================================================================
-  try {
-    const db = getDbInstance();
-    const query =
-      settings.countryFilter === "ALL"
-        ? "SELECT id, type, host, port, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 1 AND in_pool = 0"
-        : "SELECT id, type, host, port, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 1 AND in_pool = 0 AND UPPER(country_code) = ?";
+    // ================================================================
+    // 3. Test Tier 1 (bottom pool) — promote to Tier 2 on success streak,
+    //    delete on 5 consecutive failures
+    // ================================================================
+    try {
+      const db = getDbInstance();
+      const query =
+        settings.countryFilter === "ALL"
+          ? "SELECT id, type, host, port, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 1 AND in_pool = 0"
+          : "SELECT id, type, host, port, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 1 AND in_pool = 0 AND UPPER(country_code) = ?";
 
-    const params = settings.countryFilter === "ALL" ? [] : [settings.countryFilter];
-    const tier1Proxies = db.prepare(query).all(...params) as Array<{
-      id: string;
-      type: string;
-      host: string;
-      port: number;
-      consecutive_successes: number;
-      consecutive_failures: number;
-    }>;
+      const params = settings.countryFilter === "ALL" ? [] : [settings.countryFilter];
+      const tier1Proxies = db.prepare(query).all(...params) as Array<{
+        id: string;
+        type: string;
+        host: string;
+        port: number;
+        consecutive_successes: number;
+        consecutive_failures: number;
+      }>;
 
-    if (tier1Proxies.length > 0) {
-      log.info({ count: tier1Proxies.length }, "Testing Tier 1 (bottom pool) proxies");
+      if (tier1Proxies.length > 0) {
+        log.info({ count: tier1Proxies.length }, "Testing Tier 1 (bottom pool) proxies");
 
-      const {
-        recordFreeProxyTestResult,
-        setFreeProxyTier,
-        deleteFreeProxy,
-        resetFreeProxyConsecutiveCounters,
-      } = await import("@/lib/db/freeProxies");
+        const {
+          recordFreeProxyTestResult,
+          setFreeProxyTier,
+          deleteFreeProxy,
+          resetFreeProxyConsecutiveCounters,
+        } = await import("@/lib/db/freeProxies");
 
-      const chunk = <T>(arr: T[], size: number): T[][] =>
-        Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
-          arr.slice(i * size, i * size + size)
-        );
+        const chunk = <T>(arr: T[], size: number): T[][] =>
+          Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
+            arr.slice(i * size, i * size + size)
+          );
 
-      const chunks = chunk(tier1Proxies, 50);
-      for (const batch of chunks) {
-        await Promise.all(
-          batch.map(async (item) => {
-            // Fast-delete on accumulated real-request failures (no probe needed).
-            const key = `${item.host}:${item.port}`;
-            if ((liveFailures.get(key) ?? 0) >= liveFailThreshold) {
-              await deleteFreeProxy(item.id);
-              log.info({ host: item.host }, "Tier 1 proxy removed (live-request failures)");
-              return;
-            }
-            const url = `${item.type}://${item.host}:${item.port}`;
-            try {
-              const { ok, latencyMs } = await testProxyMultiTarget(url, 5000);
-              if (ok) {
+        const chunks = chunk(tier1Proxies, 50);
+        for (const batch of chunks) {
+          await Promise.all(
+            batch.map(async (item) => {
+              // Fast-delete on accumulated real-request failures (no probe needed).
+              const key = `${item.host}:${item.port}`;
+              if ((liveFailures.get(key) ?? 0) >= liveFailThreshold) {
+                await deleteFreeProxy(item.id);
+                log.info({ host: item.host }, "Tier 1 proxy removed (live-request failures)");
+                return;
+              }
+              const url = `${item.type}://${item.host}:${item.port}`;
+              try {
+                const { ok, latencyMs } = await testProxyMultiTarget(url, 5000);
                 const quality = computeQualityScore(latencyMs);
-                await recordFreeProxyTestResult(item.id, true, latencyMs, quality);
-                const newSuccessCount = item.consecutive_successes + 1;
-                if (newSuccessCount >= settings.tier1PromoteThreshold) {
-                  await setFreeProxyTier(item.id, 2);
-                  await resetFreeProxyConsecutiveCounters(item.id);
-                  log.info({ host: item.host }, "Tier 1 proxy promoted to Tier 2 (success streak)");
+                if (ok) {
+                  await recordFreeProxyTestResult(item.id, true, latencyMs, quality);
+                  const newSuccessCount = item.consecutive_successes + 1;
+                  if (newSuccessCount >= settings.tier1PromoteThreshold) {
+                    await setFreeProxyTier(item.id, 2);
+                    await resetFreeProxyConsecutiveCounters(item.id);
+                    log.info(
+                      { host: item.host },
+                      "Tier 1 proxy promoted to Tier 2 (success streak)"
+                    );
+                  }
+                } else {
+                  await recordFreeProxyTestResult(item.id, false, latencyMs, quality);
+                  const newFailCount = item.consecutive_failures + 1;
+                  if (newFailCount >= 5) {
+                    await deleteFreeProxy(item.id);
+                    log.info({ host: item.host }, "Tier 1 proxy deleted (5 consecutive failures)");
+                  }
                 }
-              } else {
-                await recordFreeProxyTestResult(item.id, false, latencyMs, quality);
+              } catch (err) {
+                await recordFreeProxyTestResult(item.id, false, null, 0);
                 const newFailCount = item.consecutive_failures + 1;
                 if (newFailCount >= 5) {
                   await deleteFreeProxy(item.id);
                   log.info({ host: item.host }, "Tier 1 proxy deleted (5 consecutive failures)");
                 }
               }
-            } catch (err) {
-              await recordFreeProxyTestResult(item.id, false, null, 0);
-              const newFailCount = item.consecutive_failures + 1;
-              if (newFailCount >= 5) {
-                await deleteFreeProxy(item.id);
-                log.info({ host: item.host }, "Tier 1 proxy deleted (5 consecutive failures)");
-              }
-            }
-          })
-        );
+            })
+          );
+        }
       }
+    } catch (err) {
+      log.warn({ err }, "Tier 1 proxy testing failed (non-fatal)");
     }
-  } catch (err) {
-    log.warn({ err }, "Tier 1 proxy testing failed (non-fatal)");
-  }
 
     log.info("Free proxy check tick finished");
   } finally {
@@ -783,32 +804,32 @@ export async function runFreeProxySyncTick(settingsSnapshot?: JobSettings): Prom
     log.info("Free proxy sync tick started");
     const settings = settingsSnapshot ?? (await getJobSettings());
 
-  // Step 1: Sync sources
-  await syncFreeProxySources();
+    // Step 1: Sync sources
+    await syncFreeProxySources();
 
-  // Step 2: Delete non-matching country proxies from free_proxies
-  try {
-    if (settings.countryFilter && settings.countryFilter !== "ALL") {
-      const db = getDbInstance();
-      const deleted = db
-        .prepare(
-          "DELETE FROM free_proxies WHERE country_code IS NOT NULL AND UPPER(country_code) != ? AND in_pool = 0"
-        )
-        .run(settings.countryFilter);
-      if (deleted.changes > 0) {
-        log.info({ deleted: deleted.changes }, "Cleaned up non-matching country free proxies");
+    // Step 2: Delete non-matching country proxies from free_proxies
+    try {
+      if (settings.countryFilter && settings.countryFilter !== "ALL") {
+        const db = getDbInstance();
+        const deleted = db
+          .prepare(
+            "DELETE FROM free_proxies WHERE country_code IS NOT NULL AND UPPER(country_code) != ? AND in_pool = 0"
+          )
+          .run(settings.countryFilter);
+        if (deleted.changes > 0) {
+          log.info({ deleted: deleted.changes }, "Cleaned up non-matching country free proxies");
+        }
       }
+    } catch (err) {
+      log.warn({ err }, "Failed to delete non-matching country free proxies (non-fatal)");
     }
-  } catch (err) {
-    log.warn({ err }, "Failed to delete non-matching country free proxies (non-fatal)");
-  }
 
-  // Step 3: Promote best Tier 2 proxies to Tier 3 (global pool)
-  try {
-    const db = getDbInstance();
-    const query =
-      settings.countryFilter === "ALL"
-        ? `SELECT id, host, port, type, quality_score, latency_ms
+    // Step 3: Promote best Tier 2 proxies to Tier 3 (global pool)
+    try {
+      const db = getDbInstance();
+      const query =
+        settings.countryFilter === "ALL"
+          ? `SELECT id, host, port, type, quality_score, latency_ms
            FROM free_proxies
            WHERE tier = 2
              AND in_pool = 0
@@ -819,7 +840,7 @@ export async function runFreeProxySyncTick(settingsSnapshot?: JobSettings): Prom
              CASE WHEN latency_ms IS NULL THEN 1 ELSE 0 END,
              latency_ms ASC
            LIMIT ?`
-        : `SELECT id, host, port, type, quality_score, latency_ms
+          : `SELECT id, host, port, type, quality_score, latency_ms
            FROM free_proxies
            WHERE tier = 2
              AND in_pool = 0
@@ -832,53 +853,53 @@ export async function runFreeProxySyncTick(settingsSnapshot?: JobSettings): Prom
              latency_ms ASC
            LIMIT ?`;
 
-    const candidateLimit = settings.poolSize * 2;
-    const params =
-      settings.countryFilter === "ALL"
-        ? [settings.minTests, settings.minQuality, candidateLimit]
-        : [settings.countryFilter, settings.minTests, settings.minQuality, candidateLimit];
+      const candidateLimit = settings.poolSize * 2;
+      const params =
+        settings.countryFilter === "ALL"
+          ? [settings.minTests, settings.minQuality, candidateLimit]
+          : [settings.countryFilter, settings.minTests, settings.minQuality, candidateLimit];
 
-    const candidates = db.prepare(query).all(...params) as CandidateRow[];
+      const candidates = db.prepare(query).all(...params) as CandidateRow[];
 
-    if (candidates.length === 0) {
-      log.info(`No eligible Tier 2 proxies found for promotion — global pool unchanged`);
-    } else {
-      const testResults = await Promise.all(
-        candidates.slice(0, 30).map(async (row) => {
-          const url = `${row.type}://${row.host}:${row.port}`;
-          const { ok } = await testProxyMultiTarget(url, 5000);
-          return { row, ok };
-        })
-      );
+      if (candidates.length === 0) {
+        log.info(`No eligible Tier 2 proxies found for promotion — global pool unchanged`);
+      } else {
+        const testResults = await Promise.all(
+          candidates.slice(0, 30).map(async (row) => {
+            const url = `${row.type}://${row.host}:${row.port}`;
+            const { ok } = await testProxyMultiTarget(url, 5000);
+            return { row, ok };
+          })
+        );
 
-      const alive = testResults.filter((r) => r.ok).map((r) => r.row);
-      log.info(
-        { tested: candidates.length, alive: alive.length },
-        "Liveness test complete for Tier 2 → Tier 3 promotion candidates"
-      );
+        const alive = testResults.filter((r) => r.ok).map((r) => r.row);
+        log.info(
+          { tested: candidates.length, alive: alive.length },
+          "Liveness test complete for Tier 2 → Tier 3 promotion candidates"
+        );
 
-      // Promote alive candidates to fill pool slots
-      for (const candidate of alive.slice(0, settings.poolSize)) {
-        await promoteProxyToGlobal(candidate, settings.countryFilter, settings.poolSize);
+        // Promote alive candidates to fill pool slots
+        for (const candidate of alive.slice(0, settings.poolSize)) {
+          await promoteProxyToGlobal(candidate, settings.countryFilter, settings.poolSize);
+        }
+
+        log.info(
+          { promoted: Math.min(alive.length, settings.poolSize) },
+          "Promoted Tier 2 proxies to Tier 3 (global pool)"
+        );
       }
-
-      log.info(
-        { promoted: Math.min(alive.length, settings.poolSize) },
-        "Promoted Tier 2 proxies to Tier 3 (global pool)"
-      );
-    }
-  } catch (err) {
-    log.warn({ err }, "Tier 2 → Tier 3 promotion failed (non-fatal)");
-  }
-
-  // Step 4: Auto-distribute Tier 3 proxies across provider accounts (1:1, no sharing)
-  if (settings.autoDistribute) {
-    try {
-      await distributeProxiesToAccounts();
     } catch (err) {
-      log.warn({ err }, "Auto-distribute Tier 3 proxies failed (non-fatal)");
+      log.warn({ err }, "Tier 2 → Tier 3 promotion failed (non-fatal)");
     }
-  }
+
+    // Step 4: Auto-distribute Tier 3 proxies across provider accounts (1:1, no sharing)
+    if (settings.autoDistribute) {
+      try {
+        await distributeProxiesToAccounts();
+      } catch (err) {
+        log.warn({ err }, "Auto-distribute Tier 3 proxies failed (non-fatal)");
+      }
+    }
 
     log.info("Free proxy sync tick finished");
   } finally {
@@ -935,7 +956,9 @@ export async function reloadFreeProxyJob(
       "Scheduling 3-tier proxy check & sync background jobs"
     );
 
-    void runFreeProxyCheckTick(jobSettings).catch((err) => log.warn({ err }, "Initial free proxy check failed"));
+    void runFreeProxyCheckTick(jobSettings).catch((err) =>
+      log.warn({ err }, "Initial free proxy check failed")
+    );
     checkTimer = setInterval(() => {
       // Re-read settings each scheduled tick so config changes apply between reloads
       // without requiring a hot-reload trigger; falls back to the snapshot on error.
@@ -943,7 +966,9 @@ export async function reloadFreeProxyJob(
     }, jobSettings.checkIntervalMs);
     checkTimer.unref?.();
 
-    void runFreeProxySyncTick(jobSettings).catch((err) => log.warn({ err }, "Initial free proxy sync failed"));
+    void runFreeProxySyncTick(jobSettings).catch((err) =>
+      log.warn({ err }, "Initial free proxy sync failed")
+    );
     syncTimer = setInterval(() => {
       void runFreeProxySyncTick().catch((err) => log.warn({ err }, "Free proxy sync failed"));
     }, jobSettings.syncIntervalMs);

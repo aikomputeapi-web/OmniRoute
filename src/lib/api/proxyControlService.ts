@@ -43,12 +43,7 @@ export type ProxyTier = "tier1" | "tier2" | "tier3";
 export const PROXY_CONTROL_TIERS: readonly ProxyTier[] = ["tier1", "tier2", "tier3"];
 
 export type ProxyManualAction =
-  | "promote"
-  | "demote"
-  | "quarantine"
-  | "remove"
-  | "run-check"
-  | "run-sync";
+  "promote" | "demote" | "quarantine" | "remove" | "run-check" | "run-sync";
 
 export const PROXY_MANUAL_ACTIONS: readonly ProxyManualAction[] = [
   "promote",
@@ -118,6 +113,10 @@ export interface GlobalPoolRowWire {
   status: string;
   updated_at: string;
   scope_id: string | null;
+  /** Lifetime probe counters from the linked free_proxies row (null when the
+   *  registry row was added manually and has no free-proxy lineage). */
+  test_count: number | null;
+  success_count: number | null;
 }
 
 export interface JobSettingsWire {
@@ -187,7 +186,7 @@ function toBool(value: unknown): boolean {
 
 /** Provider toggle map: derive current env state then overlay persisted toggles. */
 async function resolveProviderToggles(
-  persisted: Record<string, boolean> | undefined,
+  persisted: Record<string, boolean> | undefined
 ): Promise<Record<string, boolean>> {
   const providers = getAllProviders();
   const map: Record<string, boolean> = {};
@@ -220,9 +219,18 @@ function jobSettingsFromRaw(raw: Record<string, unknown>): JobSettingsWire {
     autoElevate: raw.freeProxyAutoElevate !== false,
     autoRemoveDead:
       raw.freeProxyAutoRemoveDead === undefined ? true : raw.freeProxyAutoRemoveDead !== false,
-    tier1PromoteThreshold: num(raw.freeProxyTier1PromoteThreshold, DEFAULT_JOB_SETTINGS.tier1PromoteThreshold),
-    tier2PromoteThreshold: num(raw.freeProxyTier2PromoteThreshold, DEFAULT_JOB_SETTINGS.tier2PromoteThreshold),
-    tier2DemoteThreshold: num(raw.freeProxyTier2DemoteThreshold, DEFAULT_JOB_SETTINGS.tier2DemoteThreshold),
+    tier1PromoteThreshold: num(
+      raw.freeProxyTier1PromoteThreshold,
+      DEFAULT_JOB_SETTINGS.tier1PromoteThreshold
+    ),
+    tier2PromoteThreshold: num(
+      raw.freeProxyTier2PromoteThreshold,
+      DEFAULT_JOB_SETTINGS.tier2PromoteThreshold
+    ),
+    tier2DemoteThreshold: num(
+      raw.freeProxyTier2DemoteThreshold,
+      DEFAULT_JOB_SETTINGS.tier2DemoteThreshold
+    ),
     liveFailThreshold: num(raw.freeProxyLiveFailThreshold, DEFAULT_JOB_SETTINGS.liveFailThreshold),
     autoDistribute: raw.freeProxyAutoDistribute === true,
   };
@@ -255,11 +263,13 @@ function listGlobalPoolRows(): GlobalPoolRowWire[] {
   const rows = db
     .prepare(
       `SELECT p.id, p.type, p.host, p.port, p.source, p.region, p.quality_score,
-              p.latency_ms, p.status, p.updated_at, pa.scope_id
+              p.latency_ms, p.status, p.updated_at, pa.scope_id,
+              fp.test_count AS test_count, fp.success_count AS success_count
          FROM proxy_registry p
          JOIN proxy_assignments pa ON pa.proxy_id = p.id
+         LEFT JOIN free_proxies fp ON fp.pool_proxy_id = p.id
         WHERE pa.scope = 'global' AND pa.scope_id LIKE '__global__%'
-        ORDER BY CAST(SUBSTR(pa.scope_id, 11) AS INTEGER) ASC`,
+        ORDER BY CAST(SUBSTR(pa.scope_id, 11) AS INTEGER) ASC`
     )
     .all() as Array<Record<string, unknown>>;
   return rows.map((r) => ({
@@ -274,6 +284,8 @@ function listGlobalPoolRows(): GlobalPoolRowWire[] {
     status: String(r.status ?? "active"),
     updated_at: String(r.updated_at ?? ""),
     scope_id: r.scope_id != null ? String(r.scope_id) : null,
+    test_count: r.test_count != null ? num(r.test_count, 0) : null,
+    success_count: r.success_count != null ? num(r.success_count, 0) : null,
   }));
 }
 
@@ -334,7 +346,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 export async function applyProxyControlSettings(
   patch: Record<string, unknown>,
-  _actor?: string,
+  _actor?: string
 ): Promise<ProxyControlSnapshotWire> {
   if (!isRecord(patch)) {
     throw newMalformedError("settings patch must be a JSON object");
@@ -345,7 +357,10 @@ export async function applyProxyControlSettings(
   if (patch.enabled !== undefined) {
     updates.freeProxyAutoJobEnabled = toBool(patch.enabled);
   }
-  if (typeof patch.checkIntervalMinutes === "number" && Number.isFinite(patch.checkIntervalMinutes)) {
+  if (
+    typeof patch.checkIntervalMinutes === "number" &&
+    Number.isFinite(patch.checkIntervalMinutes)
+  ) {
     updates.freeProxyCheckIntervalMin = Math.max(1, Math.round(patch.checkIntervalMinutes));
   } else if (typeof patch.checkIntervalMin === "number") {
     updates.freeProxyCheckIntervalMin = Math.max(1, Math.round(patch.checkIntervalMin));
@@ -358,16 +373,19 @@ export async function applyProxyControlSettings(
   if (typeof patch.countryFilter === "string" && patch.countryFilter.length > 0) {
     updates.freeProxyCountryFilter = String(patch.countryFilter).toUpperCase();
   }
-  if (typeof patch.minQuality === "number") updates.freeProxyMinQuality = Math.max(0, Math.round(patch.minQuality));
+  if (typeof patch.minQuality === "number")
+    updates.freeProxyMinQuality = Math.max(0, Math.round(patch.minQuality));
   if (typeof patch.minSuccessRate === "number") {
     updates.freeProxyMinSuccessRate = Math.max(0, Math.min(100, Math.round(patch.minSuccessRate)));
   }
-  if (typeof patch.minTests === "number") updates.freeProxyMinTests = Math.max(1, Math.round(patch.minTests));
+  if (typeof patch.minTests === "number")
+    updates.freeProxyMinTests = Math.max(1, Math.round(patch.minTests));
   if (typeof patch.poolSize === "number") {
     updates.freeProxyGlobalPoolSize = Math.max(1, Math.round(patch.poolSize));
   }
   if (typeof patch.autoElevate === "boolean") updates.freeProxyAutoElevate = patch.autoElevate;
-  if (typeof patch.autoRemoveDead === "boolean") updates.freeProxyAutoRemoveDead = patch.autoRemoveDead;
+  if (typeof patch.autoRemoveDead === "boolean")
+    updates.freeProxyAutoRemoveDead = patch.autoRemoveDead;
   if (typeof patch.tier1PromoteThreshold === "number") {
     updates.freeProxyTier1PromoteThreshold = Math.max(1, Math.round(patch.tier1PromoteThreshold));
   }
@@ -380,7 +398,8 @@ export async function applyProxyControlSettings(
   if (typeof patch.liveFailThreshold === "number") {
     updates.freeProxyLiveFailThreshold = Math.max(1, Math.round(patch.liveFailThreshold));
   }
-  if (typeof patch.autoDistribute === "boolean") updates.freeProxyAutoDistribute = patch.autoDistribute;
+  if (typeof patch.autoDistribute === "boolean")
+    updates.freeProxyAutoDistribute = patch.autoDistribute;
 
   if (isRecord(patch.providers)) {
     const providerToggles: Record<string, boolean> = {};
@@ -393,8 +412,7 @@ export async function applyProxyControlSettings(
   // Reject keys we do not know how to persist, but only at the top level —
   // unknown nested keys (e.g. extra provider ids) are tolerated.
   const unknownKeys = Object.keys(patch).filter(
-    (key) =>
-      !KNOWN_SETTINGS_PATCH_KEYS.has(key) && key !== "actor",
+    (key) => !KNOWN_SETTINGS_PATCH_KEYS.has(key) && key !== "actor"
   );
   if (unknownKeys.length > 0) {
     throw newMalformedError(`unknown settings key(s): ${unknownKeys.join(", ")}`);
@@ -496,7 +514,7 @@ function demoteTier3ToTier2(registryId: string): boolean {
 
     if (freeProxy?.id) {
       db.prepare(
-        "UPDATE free_proxies SET tier = 2, in_pool = 0, pool_proxy_id = NULL, consecutive_successes = 0, consecutive_failures = 0, updated_at = ? WHERE id = ?",
+        "UPDATE free_proxies SET tier = 2, in_pool = 0, pool_proxy_id = NULL, consecutive_successes = 0, consecutive_failures = 0, updated_at = ? WHERE id = ?"
       ).run(now, freeProxy.id);
     }
     return Boolean(freeProxy?.id);
@@ -553,9 +571,8 @@ async function removeSelection(tier: ProxyTier, sourceId: string): Promise<boole
   // linked free_proxies row to Tier 1 (counters cleared, in_pool=0).
   const { demoteTier3ToTier1 } = await import("@/lib/jobs/freeProxyJob");
   const db = getDbInstance();
-  const hostRow = db
-    .prepare("SELECT host FROM proxy_registry WHERE id = ?")
-    .get(sourceId) as { host?: string } | undefined;
+  const hostRow = db.prepare("SELECT host FROM proxy_registry WHERE id = ?").get(sourceId) as
+    { host?: string } | undefined;
   await demoteTier3ToTier1(sourceId, hostRow?.host ?? sourceId);
   return true;
 }
@@ -565,7 +582,7 @@ async function removeSelection(tier: ProxyTier, sourceId: string): Promise<boole
  * Center. `run-check` / `run-sync` accept an empty selection (global tick).
  */
 export async function dispatchProxyControlAction(
-  input: ProxyActionRequestInput,
+  input: ProxyActionRequestInput
 ): Promise<ProxyActionResultWire> {
   if (!isRecord(input as unknown)) {
     throw newMalformedError("action request must be a JSON object");
@@ -573,7 +590,7 @@ export async function dispatchProxyControlAction(
   const action = String(input.action ?? "");
   if (!PROXY_MANUAL_ACTIONS.includes(action as ProxyManualAction)) {
     throw newMalformedError(
-      `unknown action "${action}"; allowed: ${PROXY_MANUAL_ACTIONS.join(", ")}`,
+      `unknown action "${action}"; allowed: ${PROXY_MANUAL_ACTIONS.join(", ")}`
     );
   }
   const rawSelection = input.selectionKeys;

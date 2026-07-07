@@ -14,6 +14,8 @@ type PoolProxy = {
   latencyMs?: number | null;
   egressIp?: string | null;
   alive: boolean;
+  testCount?: number | null;
+  successCount?: number | null;
 };
 
 type HealthcheckResult = {
@@ -31,7 +33,11 @@ type HealthcheckSummary = {
 
 export default function GlobalConfigTab() {
   const [proxyModalOpen, setProxyModalOpen] = useState(false);
-  const [globalProxy, setGlobalProxy] = useState<{ type: string; host: string; port: number } | null>(null);
+  const [globalProxy, setGlobalProxy] = useState<{
+    type: string;
+    host: string;
+    port: number;
+  } | null>(null);
   const [poolProxies, setPoolProxies] = useState<PoolProxy[]>([]);
   const [poolLoading, setPoolLoading] = useState(true);
   const [perKeyProxyEnabled, setPerKeyProxyEnabled] = useState(false);
@@ -150,43 +156,62 @@ export default function GlobalConfigTab() {
     <div className="space-y-6">
       {/* Legacy Global Proxy + Per-Key toggle, side by side */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-      <Card className="p-0 overflow-hidden">
-        <div className="p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <span className="material-symbols-outlined text-xl text-primary" aria-hidden="true">vpn_lock</span>
-            <h2 className="text-lg font-bold">{t("globalProxy")}</h2>
-          </div>
-          <p className="text-sm text-text-muted mb-4">{t("globalProxyDesc")}</p>
-          <div className="flex items-center gap-3">
-            {globalProxy ? (
-              <span className="px-2.5 py-1 rounded text-xs font-bold uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                {globalProxy.type}://{globalProxy.host}:{globalProxy.port}
+        <Card className="p-0 overflow-hidden">
+          <div className="p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <span className="material-symbols-outlined text-xl text-primary" aria-hidden="true">
+                vpn_lock
               </span>
-            ) : (
-              <span className="text-sm text-text-muted">{t("noGlobalProxy")}</span>
-            )}
-            <Button size="sm" variant={globalProxy ? "secondary" : "primary"} icon="settings" onClick={() => { loadGlobalProxy(); setProxyModalOpen(true); }}>
-              {globalProxy ? tc("edit") : t("configure")}
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      {/* Per-Key Proxy Toggle */}
-      <Card className="p-0 overflow-hidden">
-        <div className="p-6">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-xl text-violet-500" aria-hidden="true">key</span>
-              <div>
-                <h2 className="text-lg font-bold">{t("perKeyProxyEnabled")}</h2>
-                <p className="text-sm text-text-muted">{t("perKeyProxyEnabledDesc")}</p>
-              </div>
+              <h2 className="text-lg font-bold">{t("globalProxy")}</h2>
             </div>
-            <Toggle checked={perKeyProxyEnabled} disabled={perKeyLoading} onChange={handleTogglePerKeyProxyEnabled} />
+            <p className="text-sm text-text-muted mb-4">{t("globalProxyDesc")}</p>
+            <div className="flex items-center gap-3">
+              {globalProxy ? (
+                <span className="px-2.5 py-1 rounded text-xs font-bold uppercase bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                  {globalProxy.type}://{globalProxy.host}:{globalProxy.port}
+                </span>
+              ) : (
+                <span className="text-sm text-text-muted">{t("noGlobalProxy")}</span>
+              )}
+              <Button
+                size="sm"
+                variant={globalProxy ? "secondary" : "primary"}
+                icon="settings"
+                onClick={() => {
+                  loadGlobalProxy();
+                  setProxyModalOpen(true);
+                }}
+              >
+                {globalProxy ? tc("edit") : t("configure")}
+              </Button>
+            </div>
           </div>
-        </div>
-      </Card>
+        </Card>
+
+        {/* Per-Key Proxy Toggle */}
+        <Card className="p-0 overflow-hidden">
+          <div className="p-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <span
+                  className="material-symbols-outlined text-xl text-violet-500"
+                  aria-hidden="true"
+                >
+                  key
+                </span>
+                <div>
+                  <h2 className="text-lg font-bold">{t("perKeyProxyEnabled")}</h2>
+                  <p className="text-sm text-text-muted">{t("perKeyProxyEnabledDesc")}</p>
+                </div>
+              </div>
+              <Toggle
+                checked={perKeyProxyEnabled}
+                disabled={perKeyLoading}
+                onChange={handleTogglePerKeyProxyEnabled}
+              />
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Global Proxy Pool Card (10-20 auto-managed best proxies) */}
@@ -194,7 +219,9 @@ export default function GlobalConfigTab() {
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-xl text-cyan-500" aria-hidden="true">cloud_queue</span>
+              <span className="material-symbols-outlined text-xl text-cyan-500" aria-hidden="true">
+                cloud_queue
+              </span>
               <div>
                 <h2 className="text-lg font-bold">Global Proxy Pool</h2>
                 <p className="text-xs text-text-muted">
@@ -203,18 +230,26 @@ export default function GlobalConfigTab() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-emerald-400">
-                {livePool.length} alive
-              </span>
+              <span className="text-xs text-emerald-400">{livePool.length} alive</span>
               {deadPool.length > 0 && (
-                <span className="text-xs text-red-400">
-                  {deadPool.length} dead
-                </span>
+                <span className="text-xs text-red-400">{deadPool.length} dead</span>
               )}
-              <Button size="sm" variant="secondary" icon="refresh" onClick={handleValidatePool} disabled={testing}>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon="refresh"
+                onClick={handleValidatePool}
+                disabled={testing}
+              >
                 Validate
               </Button>
-              <Button size="sm" variant="secondary" icon="sync" onClick={handleRotatePool} disabled={testing}>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon="sync"
+                onClick={handleRotatePool}
+                disabled={testing}
+              >
                 Refresh Pool
               </Button>
             </div>
@@ -224,7 +259,8 @@ export default function GlobalConfigTab() {
             <div className="text-sm text-text-muted py-4">{t("loading")}</div>
           ) : poolProxies.length === 0 ? (
             <div className="text-sm text-text-muted py-4">
-              No auto-managed proxies in global pool. Run "Sync All" in the Free Pool tab to discover proxies, or add proxies manually in the Proxy Pool tab.
+              No auto-managed proxies in global pool. Run &quot;Sync All&quot; in the Free Pool tab
+              to discover proxies, or add proxies manually in the Proxy Pool tab.
             </div>
           ) : (
             <div className="overflow-x-auto rounded border border-border">
@@ -237,6 +273,7 @@ export default function GlobalConfigTab() {
                     <th className="px-3 py-2 text-left">Egress IP</th>
                     <th className="px-3 py-2 text-right">Latency</th>
                     <th className="px-3 py-2 text-right">Quality</th>
+                    <th className="px-3 py-2 text-right">Pass / Fail</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -259,10 +296,36 @@ export default function GlobalConfigTab() {
                       </td>
                       <td className="px-3 py-1.5 text-right">
                         {p.qualityScore != null ? (
-                          <span className={p.qualityScore >= 80 ? "text-emerald-400" : p.qualityScore >= 50 ? "text-yellow-400" : "text-red-400"}>
+                          <span
+                            className={
+                              p.qualityScore >= 80
+                                ? "text-emerald-400"
+                                : p.qualityScore >= 50
+                                  ? "text-yellow-400"
+                                  : "text-red-400"
+                            }
+                          >
                             {p.qualityScore}
                           </span>
-                        ) : "—"}
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td
+                        className="px-3 py-1.5 text-right font-mono whitespace-nowrap"
+                        title="Successful / failed tests"
+                      >
+                        {p.testCount != null && p.testCount > 0 ? (
+                          <span>
+                            <span className="text-emerald-400">{p.successCount ?? 0}</span>
+                            <span className="text-text-muted"> / </span>
+                            <span className="text-red-400">
+                              {p.testCount - (p.successCount ?? 0)}
+                            </span>
+                          </span>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -277,22 +340,35 @@ export default function GlobalConfigTab() {
       <Card className="p-0 overflow-hidden">
         <div className="p-6">
           <div className="flex items-center gap-2 mb-4">
-            <span className="material-symbols-outlined text-xl text-primary" aria-hidden="true">network_check</span>
+            <span className="material-symbols-outlined text-xl text-primary" aria-hidden="true">
+              network_check
+            </span>
             <h2 className="text-lg font-bold">{t("bulkHealthcheck")}</h2>
           </div>
           <p className="text-sm text-text-muted mb-4">{t("bulkHealthcheckDesc")}</p>
           <div className="flex items-center gap-3 mb-4">
-            <input type="text" value={targetUrl} onChange={(e) => setTargetUrl(e.target.value)}
+            <input
+              type="text"
+              value={targetUrl}
+              onChange={(e) => setTargetUrl(e.target.value)}
               placeholder="https://api.openai.com/v1/models"
               className="flex-1 px-3 py-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
-            <Button size="sm" variant="primary" icon={testing ? "refresh" : "play_arrow"} disabled={testing} onClick={runHealthcheck}>
+            <Button
+              size="sm"
+              variant="primary"
+              icon={testing ? "refresh" : "play_arrow"}
+              disabled={testing}
+              onClick={runHealthcheck}
+            >
               {testing ? t("healthcheckTesting") : t("healthcheckAll")}
             </Button>
           </div>
 
           {error && (
-            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-400">{error}</div>
+            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-400">
+              {error}
+            </div>
           )}
 
           {testing && !results && (
@@ -304,9 +380,15 @@ export default function GlobalConfigTab() {
 
           {summary && (
             <div className="flex items-center gap-4 mb-3 text-sm">
-              <span className="text-text-muted">{t("healthcheckTotal")}: <strong>{summary.total}</strong></span>
-              <span className="text-emerald-400">{t("healthcheckWorking")}: <strong>{summary.working}</strong></span>
-              <span className="text-red-400">{t("healthcheckFailedLabel")}: <strong>{summary.failed}</strong></span>
+              <span className="text-text-muted">
+                {t("healthcheckTotal")}: <strong>{summary.total}</strong>
+              </span>
+              <span className="text-emerald-400">
+                {t("healthcheckWorking")}: <strong>{summary.working}</strong>
+              </span>
+              <span className="text-red-400">
+                {t("healthcheckFailedLabel")}: <strong>{summary.failed}</strong>
+              </span>
             </div>
           )}
 
@@ -315,19 +397,31 @@ export default function GlobalConfigTab() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-black/5 dark:bg-white/5">
-                    <th className="text-left px-3 py-2 font-medium text-text-muted">{t("healthcheckStatus")}</th>
-                    <th className="text-left px-3 py-2 font-medium text-text-muted">{t("healthcheckProxyUrl")}</th>
-                    <th className="text-right px-3 py-2 font-medium text-text-muted">{t("healthcheckLatency")}</th>
+                    <th className="text-left px-3 py-2 font-medium text-text-muted">
+                      {t("healthcheckStatus")}
+                    </th>
+                    <th className="text-left px-3 py-2 font-medium text-text-muted">
+                      {t("healthcheckProxyUrl")}
+                    </th>
+                    <th className="text-right px-3 py-2 font-medium text-text-muted">
+                      {t("healthcheckLatency")}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {results.map((r, i) => (
                     <tr key={i} className="border-t border-black/5 dark:border-white/5">
                       <td className="px-3 py-1.5">
-                        {r.ok ? <span className="text-emerald-400 text-sm">✓</span> : <span className="text-red-400 text-sm">✗</span>}
+                        {r.ok ? (
+                          <span className="text-emerald-400 text-sm">✓</span>
+                        ) : (
+                          <span className="text-red-400 text-sm">✗</span>
+                        )}
                       </td>
                       <td className="px-3 py-1.5 font-mono truncate max-w-xs">{r.proxyUrl}</td>
-                      <td className="px-3 py-1.5 text-right text-text-muted">{r.latencyMs !== null ? `${r.latencyMs}ms` : "—"}</td>
+                      <td className="px-3 py-1.5 text-right text-text-muted">
+                        {r.latencyMs !== null ? `${r.latencyMs}ms` : "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -337,7 +431,13 @@ export default function GlobalConfigTab() {
         </div>
       </Card>
 
-      <ProxyConfigModal isOpen={proxyModalOpen} onClose={() => setProxyModalOpen(false)} level="global" levelLabel={t("globalLabel")} onSaved={loadGlobalProxy} />
+      <ProxyConfigModal
+        isOpen={proxyModalOpen}
+        onClose={() => setProxyModalOpen(false)}
+        level="global"
+        levelLabel={t("globalLabel")}
+        onSaved={loadGlobalProxy}
+      />
     </div>
   );
 }
