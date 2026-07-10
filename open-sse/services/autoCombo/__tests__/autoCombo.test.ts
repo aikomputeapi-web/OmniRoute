@@ -135,8 +135,18 @@ describe("Self-Healing", () => {
 });
 
 describe("Mode Packs", () => {
-  it("should have 4 mode packs", () => {
-    expect(getModePackNames()).toHaveLength(4);
+  it("should expose the known mode packs", () => {
+    const names = getModePackNames();
+    expect(names).toHaveLength(5);
+    expect(new Set(names)).toEqual(
+      new Set([
+        "ship-fast",
+        "cost-saver",
+        "quality-first",
+        "offline-friendly",
+        "reliability-first",
+      ])
+    );
   });
 
   it("all mode pack weights should sum to 1.0", () => {

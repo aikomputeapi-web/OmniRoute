@@ -348,8 +348,30 @@ export async function promoteFreeProxyToPool(
       now
     );
 
+    // Assign the new registry proxy to the next free global-pool slot
+    // (proxy_assignments '__global__N') — the same shape
+    // freeProxyJob.promoteProxyToGlobal produces. Without this a "promoted"
+    // proxy had a registry row but no pool slot, so it never appeared in the
+    // Tier 3 global-pool snapshot and could not be demoted/quarantined.
+    const usedRows = db
+      .prepare(
+        "SELECT scope_id FROM proxy_assignments WHERE scope = 'global' AND scope_id LIKE '__global__%'"
+      )
+      .all() as Array<{ scope_id: string }>;
+    const used = new Set<number>();
+    for (const r of usedRows) {
+      const n = parseInt(String(r.scope_id).replace("__global__", ""), 10);
+      if (!Number.isNaN(n)) used.add(n);
+    }
+    let slot = 0;
+    while (used.has(slot)) slot++;
     db.prepare(
-      "UPDATE free_proxies SET in_pool = 1, pool_proxy_id = ?, updated_at = ? WHERE id = ?"
+      `INSERT INTO proxy_assignments (scope, scope_id, proxy_id, created_at, updated_at)
+       VALUES ('global', ?, ?, ?, ?)`
+    ).run(`__global__${slot}`, newRegistryId, now, now);
+
+    db.prepare(
+      "UPDATE free_proxies SET tier = 3, in_pool = 1, pool_proxy_id = ?, updated_at = ? WHERE id = ?"
     ).run(newRegistryId, now, freeProxyId);
 
     return newRegistryId;

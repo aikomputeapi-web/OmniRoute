@@ -14,6 +14,12 @@ async function reset() {
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
+  // These are DB-primitive tests for storage/stats across arbitrary countries.
+  // upsertFreeProxy applies an intake country filter (default "US") that would
+  // silently skip the non-US fixtures below; opt out of it for the fresh DB so
+  // the tests exercise the storage layer, not the country policy.
+  const { updateSettings } = await import("../../src/lib/db/settings.ts");
+  await updateSettings({ freeProxyCountryFilter: "ALL" });
 }
 
 test.after(() => {
