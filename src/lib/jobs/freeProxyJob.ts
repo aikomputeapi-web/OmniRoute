@@ -33,31 +33,56 @@ const PROXY_TEST_TARGETS = [
 ];
 
 /**
+ * Injectable single-target proxy probe. Defaults to the real
+ * `proxyFallback.testSingleProxy`; unit tests override it via
+ * {@link _setProxyProbeForTests} so tier logic can be exercised without network.
+ */
+type SingleProxyProbe = (
+  proxyUrl: string,
+  targetUrl: string,
+  timeoutMs: number
+) => Promise<{ ok: boolean; latencyMs: number | null }>;
+
+let singleProxyProbe: SingleProxyProbe | null = null;
+
+/** Test seam: override the per-target proxy probe (pass null to restore the default). */
+export function _setProxyProbeForTests(fn: SingleProxyProbe | null): void {
+  singleProxyProbe = fn;
+}
+
+/**
  * Multi-target liveness probe: a proxy is considered "ok" only if it can reach
  * at least one of the configured provider endpoints. Testing more than just
  * api.openai.com catches proxies that are alive but geo/CDN-blocked for the
  * providers OmniRoute actually routes traffic to (AWS/Kiro, Anthropic, etc.).
  *
- * Returns the first reachable target's latency; `ok:false` only if every target
- * fails. Honors the per-target timeout provided by the caller.
+ * Returns the *reachable target's own* latency — each target is timed
+ * independently so a proxy that can't reach api.openai.com but reaches
+ * Anthropic instantly is not penalized with the earlier target's timeout baked
+ * into its latency (which would sink its quality score and block promotion).
+ * `ok:false` only if every target fails. Honors the caller's per-target timeout.
  */
-async function testProxyMultiTarget(
+export async function testProxyMultiTarget(
   proxyUrl: string,
   perTargetTimeoutMs: number
 ): Promise<{ ok: boolean; latencyMs: number | null }> {
-  const { testSingleProxy } = await import("@omniroute/open-sse/utils/proxyFallback");
-  const start = Date.now();
+  const probe =
+    singleProxyProbe ??
+    (await import("@omniroute/open-sse/utils/proxyFallback")).testSingleProxy;
+  let elapsed = 0;
   for (const target of PROXY_TEST_TARGETS) {
+    const start = Date.now();
     try {
-      const { ok } = await testSingleProxy(proxyUrl, target, perTargetTimeoutMs);
+      const { ok, latencyMs } = await probe(proxyUrl, target, perTargetTimeoutMs);
       if (ok) {
-        return { ok: true, latencyMs: Date.now() - start };
+        return { ok: true, latencyMs: latencyMs ?? Date.now() - start };
       }
     } catch {
       // try the next target
     }
+    elapsed += Date.now() - start;
   }
-  return { ok: false, latencyMs: Date.now() - start };
+  return { ok: false, latencyMs: elapsed };
 }
 
 type JobSettings = Awaited<ReturnType<typeof getJobSettings>>;
@@ -375,7 +400,25 @@ async function promoteProxyToGlobal(
 // Demote a Tier 3 proxy back to Tier 1
 // ---------------------------------------------------------------------------
 
-export async function demoteTier3ToTier1(registryId: string, host: string): Promise<void> {
+/**
+ * Demote a Tier 3 (global pool) proxy down to `targetTier` (2 or 1). The
+ * registry row + all its assignments are removed (the proxy is no longer live)
+ * and the linked `free_proxies` row is reset to the target tier.
+ *
+ * `failureHeadStart` pre-seeds `consecutive_failures` in the target tier so the
+ * next failed check trips that tier's demote rule immediately. This restores the
+ * documented cascade "Tier 3 fails → Tier 2; if it fails again → Tier 1": an
+ * automatic liveness demotion targets Tier 2 with failureHeadStart =
+ * (tier2 demote threshold − 1), so one more Tier 2 check failure drops it to
+ * Tier 1 — while a *recovery* clears the counter and keeps the proxy in the
+ * verified pool instead of dumping proven capacity back to intake.
+ */
+export async function demoteTier3Proxy(
+  registryId: string,
+  host: string,
+  targetTier: 1 | 2,
+  failureHeadStart = 0
+): Promise<void> {
   const db = getDbInstance();
   const now = new Date().toISOString();
   const freeProxy = db
@@ -387,12 +430,24 @@ export async function demoteTier3ToTier1(registryId: string, host: string): Prom
 
   if (freeProxy?.id) {
     db.prepare(
-      "UPDATE free_proxies SET tier = 1, in_pool = 0, pool_proxy_id = NULL, consecutive_successes = 0, consecutive_failures = 0, updated_at = ? WHERE id = ?"
-    ).run(now, freeProxy.id);
-    log.info({ host }, "Demoted Tier 3 proxy to Tier 1");
+      "UPDATE free_proxies SET tier = ?, in_pool = 0, pool_proxy_id = NULL, consecutive_successes = 0, consecutive_failures = ?, updated_at = ? WHERE id = ?"
+    ).run(targetTier, Math.max(0, failureHeadStart), now, freeProxy.id);
+    log.info(
+      { host, targetTier, failureHeadStart },
+      `Demoted Tier 3 proxy to Tier ${targetTier}`
+    );
   } else {
     log.info({ host, registryId }, "Removed Tier 3 proxy (no free_proxies record to demote)");
   }
+}
+
+/**
+ * Back-compat wrapper: hard-demote a Tier 3 proxy straight to Tier 1. Used by
+ * the manual "remove selection" action in the Proxy Control Center. Automatic
+ * liveness demotions use {@link demoteTier3Proxy} with `targetTier = 2`.
+ */
+export async function demoteTier3ToTier1(registryId: string, host: string): Promise<void> {
+  await demoteTier3Proxy(registryId, host, 1, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -514,6 +569,13 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
       log.warn({ err }, "Failed to read recent proxy failures (non-fatal)");
     }
     const liveFailThreshold = settings.liveFailThreshold;
+    // A failing Tier 3 proxy cascades to Tier 2 with consecutive_failures
+    // pre-seeded to (tier2 demote threshold − 1) so one more Tier 2 failure
+    // drops it to Tier 1, but a recovery keeps it in the verified pool.
+    const tier3DemoteHeadStart = Math.max(0, settings.tier2DemoteThreshold - 1);
+    // Scale the low-pool alert to the configured pool size (floor at the
+    // hardcoded minimum) so a large pool sitting mostly empty still alerts.
+    const lowPoolThreshold = Math.max(LOW_POOL_THRESHOLD, Math.ceil(settings.poolSize / 4));
 
     // ================================================================
     // 1. Test Tier 3 (global pool proxies) — any failure = demote to Tier 2
@@ -547,7 +609,7 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
               // Fast-path demote on accumulated real-request failures (no probe needed).
               const key = `${pp.host}:${pp.port}`;
               if ((liveFailures.get(key) ?? 0) >= liveFailThreshold) {
-                await demoteTier3ToTier1(pp.id, pp.host);
+                await demoteTier3Proxy(pp.id, pp.host, 2, tier3DemoteHeadStart);
                 await emitProxyAlert("proxy.demoted", {
                   tier: 3,
                   host: pp.host,
@@ -561,7 +623,7 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
                 const url = `${pp.type}://${pp.host}:${pp.port}`;
                 const { ok } = await testProxyMultiTarget(url, 5000);
                 if (!ok) {
-                  await demoteTier3ToTier1(pp.id, pp.host);
+                  await demoteTier3Proxy(pp.id, pp.host, 2, tier3DemoteHeadStart);
                   await emitProxyAlert("proxy.demoted", {
                     tier: 3,
                     host: pp.host,
@@ -570,7 +632,7 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
                   });
                 }
               } catch {
-                await demoteTier3ToTier1(pp.id, pp.host);
+                await demoteTier3Proxy(pp.id, pp.host, 2, tier3DemoteHeadStart);
               }
             })
           );
@@ -587,12 +649,12 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
           .get() as { n: number };
         const liveCount = Number(remaining?.n ?? 0);
         if (
-          liveCount < LOW_POOL_THRESHOLD &&
+          liveCount < lowPoolThreshold &&
           Date.now() - lastLowPoolAlertAt > LOW_POOL_ALERT_COOLDOWN_MS
         ) {
           lastLowPoolAlertAt = Date.now();
-          log.warn({ liveCount, threshold: LOW_POOL_THRESHOLD }, "Live proxy pool below threshold");
-          await emitProxyAlert("proxy.pool-low", { liveCount, threshold: LOW_POOL_THRESHOLD });
+          log.warn({ liveCount, threshold: lowPoolThreshold }, "Live proxy pool below threshold");
+          await emitProxyAlert("proxy.pool-low", { liveCount, threshold: lowPoolThreshold });
         }
       }
     } catch (err) {
@@ -618,8 +680,8 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
       const db = getDbInstance();
       const query =
         settings.countryFilter === "ALL"
-          ? "SELECT id, type, host, port, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0"
-          : "SELECT id, type, host, port, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0 AND UPPER(country_code) = ?";
+          ? "SELECT id, type, host, port, country_code, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0"
+          : "SELECT id, type, host, port, country_code, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 2 AND in_pool = 0 AND UPPER(country_code) = ?";
 
       const params = settings.countryFilter === "ALL" ? [] : [settings.countryFilter];
       const tier2Proxies = db.prepare(query).all(...params) as Array<{
@@ -627,6 +689,8 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
         type: string;
         host: string;
         port: number;
+        country_code: string | null;
+        consecutive_successes: number;
         consecutive_failures: number;
       }>;
 
@@ -635,6 +699,12 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
 
         const { recordFreeProxyTestResult, setFreeProxyTier, resetFreeProxyConsecutiveCounters } =
           await import("@/lib/db/freeProxies");
+
+        // Tier 2 proxies that reached the consecutive-success threshold on this
+        // tick, queued for promotion to the active pool (Tier 3). Collected then
+        // promoted sequentially after the batch to avoid concurrent global-slot
+        // races inside promoteProxyToGlobal.
+        const promotionQueue: Array<CandidateRow & { country: string }> = [];
 
         const chunk = <T>(arr: T[], size: number): T[][] =>
           Array.from({ length: Math.ceil(arr.length / size) }, (v, i) =>
@@ -668,6 +738,25 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
                 const quality = computeQualityScore(latencyMs);
                 if (ok) {
                   await recordFreeProxyTestResult(item.id, true, latencyMs, quality);
+                  // Verified → live: a Tier 2 proxy that strings together
+                  // `tier2PromoteThreshold` consecutive successful checks has
+                  // proven itself and is promoted to the active pool (Tier 3).
+                  // This is the primary every-tick path that keeps Tier 3
+                  // topped up; the slower sync-tick promotion is a backstop.
+                  if (
+                    settings.autoElevate &&
+                    item.consecutive_successes + 1 >= settings.tier2PromoteThreshold
+                  ) {
+                    promotionQueue.push({
+                      id: item.id,
+                      host: item.host,
+                      port: item.port,
+                      type: item.type,
+                      quality_score: quality,
+                      latency_ms: latencyMs,
+                      country: item.country_code || settings.countryFilter,
+                    });
+                  }
                 } else {
                   const newFailCount = item.consecutive_failures + 1;
                   await recordFreeProxyTestResult(item.id, false, latencyMs, quality);
@@ -690,6 +779,35 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
                 }
               }
             })
+          );
+        }
+
+        // Promote the accumulated Tier 2 winners to the active global pool
+        // (Tier 3), sequentially and capped at poolSize so a large backlog can't
+        // overflow the pool in one tick.
+        const maxPromotions = Math.min(promotionQueue.length, Math.max(1, settings.poolSize));
+        let promoted = 0;
+        for (let i = 0; i < maxPromotions; i++) {
+          const candidate = promotionQueue[i];
+          try {
+            await promoteProxyToGlobal(candidate, candidate.country, settings.poolSize);
+            await resetFreeProxyConsecutiveCounters(candidate.id);
+            promoted++;
+            log.info(
+              { host: candidate.host, port: candidate.port },
+              "Tier 2 proxy promoted to Tier 3 (consecutive-success streak)"
+            );
+          } catch (err) {
+            log.warn(
+              { err, host: candidate.host },
+              "Tier 2 → Tier 3 promotion failed (non-fatal)"
+            );
+          }
+        }
+        if (promotionQueue.length > 0) {
+          log.info(
+            { eligible: promotionQueue.length, promoted },
+            "Tier 2 → Tier 3 fast-promotion pass complete"
           );
         }
       }
