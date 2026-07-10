@@ -114,8 +114,25 @@ const FORCED_CONSOLIDATION_MODELS = new Set([
   "gpt-5-4",
   "gpt-5-4-high",
   "gpt-5-4-mini",
+  "gpt-5-4-nano",
   "gpt-5-3",
   "gpt-4o",
+  "gpt-4.1",
+  "gpt-4.1-mini",
+  "gpt-5",
+  "gpt-5-codex",
+  "gpt-5-codex-mini",
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-max",
+  "gpt-5.1-codex-mini",
+  "gpt-5.2-codex",
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-image-1",
+  "gpt-image-1.5",
+  "gpt-image-2",
   "o3-mini",
   "deepseek-v4",
   "deepseek-v3",
@@ -214,7 +231,8 @@ export function getCanonicalRootId(rootId: string): string {
   if (
     (lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) &&
     !lower.includes("mini") &&
-    !lower.includes("high")
+    !lower.includes("high") &&
+    !lower.includes("nano")
   ) {
     return "gpt-5-4";
   }
@@ -227,11 +245,100 @@ export function getCanonicalRootId(rootId: string): string {
   ) {
     return "gpt-5-4-mini";
   }
+  if (
+    lower.includes("gpt-5.4-nano") ||
+    lower.includes("gpt-5-4-nano") ||
+    lower.includes("gpt_5_4_nano")
+  ) {
+    return "gpt-5-4-nano";
+  }
   if (lower.includes("gpt-5.3") || lower.includes("gpt-5-3")) {
     return "gpt-5-3";
   }
   if (lower.includes("gpt-4o") || lower.includes("gpt_4o")) {
     return "gpt-4o";
+  }
+  if (
+    lower.includes("gpt-4.1-mini") ||
+    lower.includes("gpt-4-1-mini") ||
+    lower.includes("gpt_4_1_mini")
+  ) {
+    return "gpt-4.1-mini";
+  }
+  if (lower.includes("gpt-4.1") || lower.includes("gpt-4-1") || lower.includes("gpt_4_1")) {
+    return "gpt-4.1";
+  }
+
+  // gpt-5 / gpt-5.1 / gpt-5.2 / codex family. Some providers (e.g. j3) namespace
+  // a subset of their catalog with a sub-server label baked directly into the raw
+  // model id (e.g. "server1/gpt-5.1-codex" or "15/gpt-5.2") instead of a clean id
+  // ("gpt-5.1-codex"). Substring checks — not exact match — so both forms collapse
+  // into the same bucket regardless of the extra label, mirroring gpt-5.4/gpt-5.5 above.
+  if (lower.includes("gpt-image-2")) {
+    return "gpt-image-2";
+  }
+  if (lower.includes("gpt-image-1.5") || lower.includes("gpt-image-1-5")) {
+    return "gpt-image-1.5";
+  }
+  if (lower.includes("gpt-image-1")) {
+    return "gpt-image-1";
+  }
+  if (
+    lower.includes("gpt-5.1-codex-max") ||
+    lower.includes("gpt-5-1-codex-max") ||
+    lower.includes("gpt_5_1_codex_max")
+  ) {
+    return "gpt-5.1-codex-max";
+  }
+  if (
+    lower.includes("gpt-5.1-codex-mini") ||
+    lower.includes("gpt-5-1-codex-mini") ||
+    lower.includes("gpt_5_1_codex_mini")
+  ) {
+    return "gpt-5.1-codex-mini";
+  }
+  if (
+    (lower.includes("gpt-5.1-codex") ||
+      lower.includes("gpt-5-1-codex") ||
+      lower.includes("gpt_5_1_codex")) &&
+    !lower.includes("max") &&
+    !lower.includes("mini")
+  ) {
+    return "gpt-5.1-codex";
+  }
+  if (lower.includes("gpt-5.1") || lower.includes("gpt-5-1") || lower.includes("gpt_5_1")) {
+    return "gpt-5.1";
+  }
+  if (
+    lower.includes("gpt-5.2-codex") ||
+    lower.includes("gpt-5-2-codex") ||
+    lower.includes("gpt_5_2_codex")
+  ) {
+    return "gpt-5.2-codex";
+  }
+  if (lower.includes("gpt-5.2") || lower.includes("gpt-5-2") || lower.includes("gpt_5_2")) {
+    return "gpt-5.2";
+  }
+  if (lower.includes("gpt-5-codex-mini")) {
+    return "gpt-5-codex-mini";
+  }
+  if (lower.includes("gpt-5-codex") && !lower.includes("mini")) {
+    return "gpt-5-codex";
+  }
+  // gpt-5.6 preview codenames (luna/sol/terra) are distinct experimental models, not
+  // version variants of the same model — each keeps its own bucket instead of falling
+  // into the generic "gpt-5" catch-all below (which would otherwise merge all three).
+  if (lower.includes("gpt-5.6-luna") || lower.includes("gpt-5-6-luna")) {
+    return "gpt-5.6-luna";
+  }
+  if (lower.includes("gpt-5.6-sol") || lower.includes("gpt-5-6-sol")) {
+    return "gpt-5.6-sol";
+  }
+  if (lower.includes("gpt-5.6-terra") || lower.includes("gpt-5-6-terra")) {
+    return "gpt-5.6-terra";
+  }
+  if (lower.includes("gpt-5")) {
+    return "gpt-5";
   }
 
   // ── Gemini family ──────────────────────────────────────────
