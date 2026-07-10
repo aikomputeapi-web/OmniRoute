@@ -22,6 +22,7 @@ import { resolveNestedComboTargets } from "@omniroute/open-sse/services/combo";
 import { getAllSyncedAvailableModels, type SyncedAvailableModel } from "@/lib/db/models";
 import { getCompatibleFallbackModels } from "@/lib/providers/managedAvailableModels";
 import { getOpenRouterCatalog } from "@/lib/catalog/openrouterCatalog";
+import { getCanonicalRootId } from "@/lib/catalog/generateVirtualCatalog";
 import { hasEligibleConnectionForModel } from "@/domain/connectionModelRules";
 import {
   INTERNAL_PROXY_ERROR,
@@ -1468,107 +1469,9 @@ export async function getUnifiedModelsResponse(
           .replace(/-{2,}/g, "-")
           .replace(/^-+|-+$/g, "");
 
-      const getCanonicalRootId = (rootId: string): string => {
-        const lower = rootId.toLowerCase();
-
-        // ── Claude family ──────────────────────────────────────────
-        if (lower.includes("claude") && lower.includes("sonnet")) return "claude-sonnet-4-6";
-        if (lower.includes("claude") && lower.includes("opus")) return "claude-opus-4-7";
-        if (lower.includes("claude") && lower.includes("haiku")) return "claude-haiku-4-5";
-
-        // ── GPT family ─────────────────────────────────────────────
-        if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
-        if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
-        if (
-          lower.includes("gpt-5.5-high") ||
-          lower.includes("gpt-5-5-high") ||
-          lower.includes("gpt-5.5-xhigh") ||
-          lower.includes("gpt-5-5-xhigh")
-        )
-          return "gpt-5-5-high";
-        if (
-          (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) &&
-          !lower.includes("high")
-        )
-          return "gpt-5-5";
-        if (
-          lower.includes("gpt-5.4-high") ||
-          lower.includes("gpt-5-4-high") ||
-          lower.includes("gpt-5.4-xhigh") ||
-          lower.includes("gpt-5-4-xhigh")
-        )
-          return "gpt-5-4-high";
-        if (
-          (lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) &&
-          !lower.includes("mini") &&
-          !lower.includes("high")
-        )
-          return "gpt-5-4";
-        if (
-          lower.includes("gpt-5.4-mini") ||
-          lower.includes("gpt-5-4-mini") ||
-          lower.includes("gpt-5-mini") ||
-          lower.includes("gpt-5.mini") ||
-          lower.includes("gpt-4o-mini")
-        )
-          return "gpt-5-4-mini";
-        if (lower.includes("gpt-5.3") || lower.includes("gpt-5-3")) return "gpt-5-3";
-        if (lower.includes("gpt-4o") || lower.includes("gpt_4o")) return "gpt-4o";
-
-        // ── Gemini family ──────────────────────────────────────────
-        if (
-          lower.includes("gemini") &&
-          lower.includes("pro") &&
-          !lower.includes("flash") &&
-          !lower.includes("lite") &&
-          !lower.includes("agent")
-        ) {
-          if (
-            lower.includes("3.1") ||
-            lower.includes("3-1") ||
-            lower.includes("3_pro") ||
-            lower.includes("gemini_3_pro")
-          )
-            return "gemini-3-1-pro";
-          if (lower.includes("2.5") || lower.includes("2-5")) return "gemini-2-5-pro";
-          return "gemini-3-1-pro";
-        }
-        if (lower.includes("gemini") && lower.includes("flash") && lower.includes("lite"))
-          return "gemini-3-1-flash-lite";
-        if (lower.includes("gemini") && lower.includes("flash") && !lower.includes("lite")) {
-          if (lower.includes("2.5") || lower.includes("2-5")) return "gemini-2-5-flash";
-          return "gemini-3-flash";
-        }
-
-        // ── DeepSeek family ────────────────────────────────────────
-        if (lower.includes("deepseek") && lower.includes("r1")) return "deepseek-r1";
-        if (lower.includes("deepseek") && (lower.includes("v4") || lower.includes("v-4"))) return "deepseek-v4";
-        if (lower.includes("deepseek")) return "deepseek-v3";
-
-        // ── Reasoning ──────────────────────────────────────────────
-        if (lower.includes("o3-mini") || lower === "o3mini") return "o3-mini";
-
-        // ── Open weights ───────────────────────────────────────────
-        if (lower.includes("llama") && lower.includes("scout")) return "llama-4-scout";
-        if (lower.includes("mistral") && lower.includes("large")) return "mistral-large";
-        if (lower.includes("mistral") && lower.includes("small")) return "mistral-small";
-        if (lower.includes("devstral")) return "devstral-2";
-        if (lower.includes("ling") && (lower.includes("2.6") || lower.includes("2-6")))
-          return "ling-2-6";
-        if (lower.includes("qwen") && !lower.includes("coder")) return "qwen3-6";
-        if (lower.includes("gemma") && lower.includes("4") && lower.includes("31b")) return "gemma-4-31b";
-        if (lower.includes("step") && lower.includes("3.5")) return "step-3.5-flash";
-        if (lower.includes("nemotron") && lower.includes("3") && lower.includes("super")) return "nemotron-3-super";
-
-        // ── Other families ─────────────────────────────────────────
-        if (lower.includes("minimax")) return "minimax-m3";
-        if (lower.includes("kimi")) return "kimi-2.6";
-        if (lower.includes("glm")) return "glm-5.1";
-        if (lower.includes("qwen") && lower.includes("coder")) return "qwen3-coder";
-
-        return rootId;
-      };
-
+      // getCanonicalRootId is imported from generateVirtualCatalog.ts — this filter must
+      // group raw provider-prefixed duplicates the same way the generator groups combos,
+      // or a model already covered by a virtual catalog entry leaks through as a duplicate.
       const isBlocklisted = (rootId: string, modelId: string): boolean => {
         const providerPrefix = modelId.includes("/") ? modelId.split("/")[0] : "";
         if (HIDDEN_PROVIDER_PREFIXES.has(providerPrefix)) return true;
