@@ -70,13 +70,13 @@ function seedFreeProxy(row: {
     );
 }
 
-function seedTier3Registry(regId: string, host: string, port: number, slot = 0) {
+function seedTier3Registry(regId: string, host: string, port: number, slot = 0, status = "active") {
   const db = getDbInstance();
   db.prepare(
     `INSERT INTO proxy_registry
       (id, name, type, host, port, username, password, region, notes, status, source, created_at, updated_at)
-     VALUES (?, ?, 'http', ?, ?, '', '', 'US', '', 'active', 'auto-us', ?, ?)`
-  ).run(regId, `auto-us-${host}`, host, port, NOW, NOW);
+     VALUES (?, ?, 'http', ?, ?, '', '', 'US', '', ?, 'auto-us', ?, ?)`
+  ).run(regId, `auto-us-${host}`, host, port, status, NOW, NOW);
   db.prepare(
     `INSERT INTO proxy_assignments (scope, scope_id, proxy_id, created_at, updated_at)
      VALUES ('global', ?, ?, ?, ?)`
@@ -220,5 +220,83 @@ describe("free-proxy 3-tier cascade", () => {
     assert.equal(fp.in_pool, 0);
     assert.equal(fp.consecutive_failures, 2, "head-start = tier2DemoteThreshold - 1");
     assert.equal(db.prepare("SELECT COUNT(*) n FROM proxy_registry").get()!.n, 0, "removed from live pool");
+  });
+
+  it("check tick refreshes registry status to active for a reachable Tier 3 proxy (single liveness authority)", async () => {
+    // A prior sweep left status='error'; the multi-target probe says it's live.
+    seedFreeProxy({ id: "fp5", host: "5.5.5.5", port: 8080, tier: 3, inPool: 1, poolProxyId: "reg5", country: null });
+    seedTier3Registry("reg5", "5.5.5.5", 8080, 0, "error");
+    _setProxyProbeForTests(async () => ({ ok: true, latencyMs: 20 }));
+
+    await runFreeProxyCheckTick(fullSettings());
+
+    const db = getDbInstance();
+    const reg = db.prepare("SELECT * FROM proxy_registry WHERE id = 'reg5'").get() as
+      | Record<string, string>
+      | undefined;
+    assert.ok(reg, "reachable proxy is not demoted/removed");
+    assert.equal(reg!.status, "active", "status reconciled to the tier probe's verdict, not left as error");
+  });
+
+  it("check tick backfills a slot freed by a Tier 3 demotion from the best verified Tier 2 proxy", async () => {
+    // Pool of 2. One live proxy goes down (freeing a slot); a verified Tier 2
+    // proxy (not on a promotion streak) should backfill it in the same tick.
+    seedFreeProxy({ id: "down", host: "10.0.0.1", port: 8080, tier: 3, inPool: 1, poolProxyId: "regdown", country: null });
+    seedTier3Registry("regdown", "10.0.0.1", 8080, 0);
+    seedFreeProxy({
+      id: "cand",
+      host: "10.0.0.2",
+      port: 8080,
+      tier: 2,
+      country: "US",
+      consecutiveSuccesses: 0,
+      testCount: 5,
+      successCount: 5,
+    });
+    _setProxyProbeForTests(async (proxy) => ({ ok: !proxy.includes("10.0.0.1"), latencyMs: 20 }));
+
+    await runFreeProxyCheckTick(fullSettings({ poolSize: 2 }));
+
+    const db = getDbInstance();
+    const down = db.prepare("SELECT tier FROM free_proxies WHERE id = 'down'").get() as { tier: number };
+    const cand = db.prepare("SELECT tier, in_pool FROM free_proxies WHERE id = 'cand'").get() as {
+      tier: number;
+      in_pool: number;
+    };
+    assert.equal(down.tier, 2, "dead proxy demoted out of the live pool");
+    assert.equal(cand.tier, 3, "verified Tier 2 proxy backfilled the open slot same-tick");
+    assert.equal(cand.in_pool, 1);
+  });
+
+  it("minSuccessRate gates Tier 2 promotion (dead setting now wired)", async () => {
+    // A 90%-success proxy: promoted only when minSuccessRate <= its rate.
+    const seed = () =>
+      seedFreeProxy({
+        id: "p90",
+        host: "11.0.0.1",
+        port: 8080,
+        tier: 2,
+        country: null, // excluded from the Tier 2 test pass; only backfill considers it
+        testCount: 10,
+        successCount: 9,
+      });
+    _setProxyProbeForTests(async () => ({ ok: true, latencyMs: 20 }));
+
+    // country_code NULL means the US-filtered backfill query skips it; use ALL
+    // so the backfill considers it and the success-rate gate is what decides.
+    // High promote threshold so the consecutive-success streak path can never
+    // fire — the success-rate gate in the backfill is the only way to Tier 3.
+    seed();
+    await runFreeProxyCheckTick(
+      fullSettings({ poolSize: 1, countryFilter: "ALL", minSuccessRate: 100, tier2PromoteThreshold: 99 })
+    );
+    let p = getDbInstance().prepare("SELECT tier FROM free_proxies WHERE id = 'p90'").get() as { tier: number };
+    assert.equal(p.tier, 2, "90% proxy stays in Tier 2 when minSuccessRate=100");
+
+    await runFreeProxyCheckTick(
+      fullSettings({ poolSize: 1, countryFilter: "ALL", minSuccessRate: 90, tier2PromoteThreshold: 99 })
+    );
+    p = getDbInstance().prepare("SELECT tier FROM free_proxies WHERE id = 'p90'").get() as { tier: number };
+    assert.equal(p.tier, 3, "90% proxy is promotable once minSuccessRate=90");
   });
 });
