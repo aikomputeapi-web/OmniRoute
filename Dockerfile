@@ -49,7 +49,17 @@ ENV NPM_CONFIG_LEGACY_PEER_DEPS=true
 # --ignore-scripts blocks broad dependency install/postinstall hooks, closing
 # the supply-chain attack surface where a transitive dep can run arbitrary code
 # at install time. better-sqlite3 still needs a native binding for the target
-# platform, so rebuild and smoke-test only that known runtime dependency below.
+# platform, so approve + rebuild and smoke-test only that known runtime dependency
+# below.
+#
+# npm 12 (pulled in by `npm install -g npm@latest` in the base stage) blocks
+# dependency lifecycle scripts by default even for `npm rebuild` — the build
+# script must be explicitly approved via `npm install-scripts approve`. Without
+# this, `npm rebuild better-sqlite3` reports success but never compiles the
+# native binding, and the smoke test fails with "Could not locate the bindings
+# file" (broke every deploy once npm@latest advanced to 12.x). Approving only
+# better-sqlite3 keeps the same supply-chain posture as --ignore-scripts:
+# exactly one trusted, already-built dependency is allowed to run scripts.
 #
 # We REQUIRE a committed package-lock.json so resolved dependency versions
 # are reproducible.
@@ -57,6 +67,7 @@ RUN test -f package-lock.json \
   || (echo "package-lock.json is required for reproducible Docker builds" >&2 && exit 1)
 RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
   npm ci --no-audit --no-fund --legacy-peer-deps --ignore-scripts \
+  && npm install-scripts approve better-sqlite3 \
   && npm rebuild better-sqlite3 \
   && node -e "require('better-sqlite3')(':memory:').close()"
 
