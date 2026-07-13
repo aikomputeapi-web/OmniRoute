@@ -161,6 +161,7 @@ export async function getSettings() {
     freeProxyTier2PromoteThreshold: 10,
     freeProxyTier2DemoteThreshold: 3,
     freeProxyLiveFailThreshold: 3,
+    freeProxyTier1TestBatchLimit: 750,
     freeProxyAutoDistribute: process.env.FREE_PROXY_AUTO_DISTRIBUTE === "true",
   };
   for (const row of rows) {
