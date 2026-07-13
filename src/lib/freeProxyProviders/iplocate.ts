@@ -29,7 +29,10 @@ export class IplocateProvider implements FreeProxyProvider {
   readonly name = "IPLocate";
 
   isEnabled(): boolean {
-    return isProviderEnabled(this.id, "FREE_PROXY_IPLOCATE_ENABLED");
+    // Opt-in (default OFF): iplocate fetches 0 proxies and errors on every sync,
+    // contributing nothing while adding sync latency. Enable with
+    // FREE_PROXY_IPLOCATE_ENABLED=true or the UI toggle.
+    return isProviderEnabled(this.id, "FREE_PROXY_IPLOCATE_ENABLED", false);
   }
 
   private getConfig() {
@@ -100,9 +103,14 @@ export class IplocateProvider implements FreeProxyProvider {
 
         const protocols = p.protocols || ["http"];
         for (const proto of protocols) {
-          const normalizedType = proto.toLowerCase() === "https" ? "https" :
-            proto.toLowerCase() === "socks5" ? "socks5" :
-            proto.toLowerCase() === "socks4" ? "socks4" : "http";
+          const normalizedType =
+            proto.toLowerCase() === "https"
+              ? "https"
+              : proto.toLowerCase() === "socks5"
+                ? "socks5"
+                : proto.toLowerCase() === "socks4"
+                  ? "socks4"
+                  : "http";
 
           const item: FreeProxyItem = {
             source: "iplocate",
@@ -110,7 +118,9 @@ export class IplocateProvider implements FreeProxyProvider {
             port: Number(p.port),
             type: normalizedType as FreeProxyItem["type"],
             countryCode: p.country?.slice(0, 2).toUpperCase() || null,
-            qualityScore: p.speed ? Math.min(100, Math.max(0, Math.round((1 - p.speed / 10000) * 100))) : 50,
+            qualityScore: p.speed
+              ? Math.min(100, Math.max(0, Math.round((1 - p.speed / 10000) * 100)))
+              : 50,
             latencyMs: p.speed ?? null,
             anonymity: p.anonymityLevel || null,
             lastValidated: new Date().toISOString(),

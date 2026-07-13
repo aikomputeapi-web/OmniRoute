@@ -56,7 +56,10 @@ export class ProxiflyProvider implements FreeProxyProvider {
   readonly name = "Proxifly";
 
   isEnabled(): boolean {
-    return isProviderEnabled(this.id, "FREE_PROXY_PROXIFLY_ENABLED");
+    // Opt-in (default OFF): the public Proxifly endpoint returns no usable US
+    // proxies and errors on every sync, contributing nothing while adding sync
+    // latency. Enable with FREE_PROXY_PROXIFLY_ENABLED=true or the UI toggle.
+    return isProviderEnabled(this.id, "FREE_PROXY_PROXIFLY_ENABLED", false);
   }
 
   async sync(): Promise<FreeProxySyncResult> {

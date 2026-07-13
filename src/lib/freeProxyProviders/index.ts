@@ -46,7 +46,7 @@ export function getPersistedProviderToggle(id: FreeProxySourceId): boolean | und
  * clears the cache so subsequent reads fall back to env defaults.
  */
 export function setPersistedProviderToggles(
-  map: Partial<Record<FreeProxySourceId, boolean>> | null,
+  map: Partial<Record<FreeProxySourceId, boolean>> | null
 ): void {
   persistedToggles = map;
 }
@@ -54,18 +54,26 @@ export function setPersistedProviderToggles(
 /**
  * Shared enable-state resolver consulted by every provider's `isEnabled()`.
  *
- * @param id       provider id (`FreeProxySourceId`)
- * @param envFlag  the env var name the provider historically checked
- * @returns `true` unless an operator persistently disabled the provider
- *          (persisted `false`) or set the env flag to `"false"`. A persisted
- *          `true` re-enables a provider that the env flag disabled.
+ * @param id              provider id (`FreeProxySourceId`)
+ * @param envFlag         the env var name the provider historically checked
+ * @param defaultEnabled  the env-driven default when no persisted toggle exists.
+ *                        `true` (the historical behaviour): enabled unless the
+ *                        env flag is `"false"`. `false` (opt-in): disabled unless
+ *                        the env flag is `"true"` — used for providers that
+ *                        contribute nothing and only add sync latency/errors.
+ * @returns A persisted toggle always wins (operator override via the UI). Absent
+ *          one, resolves against `defaultEnabled` and the env flag.
  */
-export function isProviderEnabled(id: FreeProxySourceId, envFlag: string): boolean {
+export function isProviderEnabled(
+  id: FreeProxySourceId,
+  envFlag: string,
+  defaultEnabled = true
+): boolean {
   const persisted = getPersistedProviderToggle(id);
   if (persisted !== undefined) {
     return persisted;
   }
-  return process.env[envFlag] !== "false";
+  return defaultEnabled ? process.env[envFlag] !== "false" : process.env[envFlag] === "true";
 }
 
 /**
@@ -87,9 +95,7 @@ export async function loadPersistedProviderToggles(): Promise<void> {
   }
 }
 
-function normalizeToggles(
-  raw: unknown,
-): Partial<Record<FreeProxySourceId, boolean>> {
+function normalizeToggles(raw: unknown): Partial<Record<FreeProxySourceId, boolean>> {
   if (!raw || typeof raw !== "object") return {};
   const out: Partial<Record<FreeProxySourceId, boolean>> = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
