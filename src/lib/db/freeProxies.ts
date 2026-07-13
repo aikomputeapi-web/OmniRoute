@@ -366,6 +366,84 @@ export async function deleteFreeProxy(id: string): Promise<boolean> {
   return result.changes > 0;
 }
 
+export interface FreeProxyPoolReconcileResult {
+  /** Rows flagged pooled but not routable → returned to the testing pipeline. */
+  reclaimed: number;
+  /** Routable rows whose tier label was corrected up to Tier 3. */
+  relabeledToTier3: number;
+  /** Tier-3-labeled rows that were not in the pool → demoted to Tier 2. */
+  demotedStaleTier3: number;
+}
+
+/**
+ * Reconcile `free_proxies.tier` / `in_pool` bookkeeping against the ground truth
+ * in `proxy_registry` + `proxy_assignments`.
+ *
+ * Invariant (established by migration 119): a free proxy is genuinely "in the
+ * pool" (Tier 3) IFF its `pool_proxy_id` references a registry row that is
+ * actually routable — the registry row exists AND has at least one assignment
+ * (a global `__global__N` slot or an account scope). Manual "Add to Pool" clicks
+ * and migration 119 left three classes of drift:
+ *   1. `in_pool = 1` but the registry row is missing or has no assignment (never
+ *      routed) — these are swept back to the auto-testing pipeline.
+ *   2. `in_pool = 1` and routable but mislabeled below Tier 3 — relabeled to 3.
+ *   3. `tier = 3` while `in_pool = 0` — demoted to the verified tier (2).
+ *
+ * Pure and idempotent: only rows currently violating the invariant are touched,
+ * and no registry rows or assignments are deleted, so live routing is never
+ * disturbed. Mirrors `120_reconcile_free_proxy_pool_flags.sql` so the same
+ * reconciliation is available at runtime (e.g. after manual pool edits), not
+ * only once at migration time.
+ */
+export async function reconcileFreeProxyPoolFlags(): Promise<FreeProxyPoolReconcileResult> {
+  const db = getDbInstance();
+  const now = new Date().toISOString();
+
+  const routableExists = `EXISTS (
+    SELECT 1 FROM proxy_assignments pa
+    JOIN proxy_registry pr ON pr.id = pa.proxy_id
+    WHERE pr.id = free_proxies.pool_proxy_id
+  )`;
+
+  const result = db.transaction(() => {
+    const reclaimed = db
+      .prepare(
+        `UPDATE free_proxies
+         SET in_pool = 0,
+             pool_proxy_id = NULL,
+             tier = CASE WHEN tier = 3 THEN 2 ELSE tier END,
+             consecutive_successes = 0,
+             consecutive_failures = 0,
+             updated_at = ?
+         WHERE in_pool = 1 AND NOT ${routableExists}`
+      )
+      .run(now).changes;
+
+    const relabeledToTier3 = db
+      .prepare(
+        `UPDATE free_proxies
+         SET tier = 3, updated_at = ?
+         WHERE in_pool = 1 AND tier <> 3 AND ${routableExists}`
+      )
+      .run(now).changes;
+
+    const demotedStaleTier3 = db
+      .prepare(
+        `UPDATE free_proxies
+         SET tier = 2, updated_at = ?
+         WHERE in_pool = 0 AND tier = 3`
+      )
+      .run(now).changes;
+
+    return { reclaimed, relabeledToTier3, demotedStaleTier3 };
+  })();
+
+  if (result.reclaimed + result.relabeledToTier3 + result.demotedStaleTier3 > 0) {
+    backupDbFile("pre-write");
+  }
+  return result;
+}
+
 export async function clearFreeProxiesBySource(source: FreeProxySourceId): Promise<number> {
   const db = getDbInstance();
   const result = db
@@ -418,9 +496,11 @@ const FREE_PROXY_SYNC_KEY = "last_sync_at";
 export async function recordFreeProxySync(at?: string): Promise<string> {
   const db = getDbInstance();
   const ts = at ?? new Date().toISOString();
-  db.prepare(
-    "INSERT OR REPLACE INTO key_value (namespace, key, value) VALUES (?, ?, ?)"
-  ).run(FREE_PROXY_SYNC_NAMESPACE, FREE_PROXY_SYNC_KEY, ts);
+  db.prepare("INSERT OR REPLACE INTO key_value (namespace, key, value) VALUES (?, ?, ?)").run(
+    FREE_PROXY_SYNC_NAMESPACE,
+    FREE_PROXY_SYNC_KEY,
+    ts
+  );
   backupDbFile("pre-write");
   return ts;
 }

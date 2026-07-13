@@ -560,6 +560,7 @@ export {
   deleteFreeProxy,
   clearFreeProxiesBySource,
   pruneStaleFreeProxies,
+  reconcileFreeProxyPoolFlags,
   getFreeProxyStats,
   recordFreeProxyTestResult,
   recordFreeProxySync,
