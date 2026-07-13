@@ -66,8 +66,7 @@ export async function testProxyMultiTarget(
   perTargetTimeoutMs: number
 ): Promise<{ ok: boolean; latencyMs: number | null }> {
   const probe =
-    singleProxyProbe ??
-    (await import("@omniroute/open-sse/utils/proxyFallback")).testSingleProxy;
+    singleProxyProbe ?? (await import("@omniroute/open-sse/utils/proxyFallback")).testSingleProxy;
   let elapsed = 0;
   for (const target of PROXY_TEST_TARGETS) {
     const start = Date.now();
@@ -90,6 +89,10 @@ type JobSettings = Awaited<ReturnType<typeof getJobSettings>>;
  *  which a Tier 1/2 proxy is auto-removed/demoted without waiting for the next
  *  full probe. Tunable via settings.freeProxyLiveFailThreshold. */
 const DEFAULT_LIVE_FAIL_THRESHOLD = 3;
+/** Default cap on Tier 1 proxies probed per check tick (0 = unlimited). Keeps a
+ *  large intake pool from overrunning the check interval; oldest-tested first so
+ *  the whole pool still rotates across successive ticks. */
+const DEFAULT_TIER1_TEST_BATCH_LIMIT = 750;
 /** How far back to look for real-request failures. */
 const LIVE_FAIL_WINDOW_MS = 5 * 60 * 1000;
 /** Minimum live Tier 3 proxies before the low-pool alert fires. */
@@ -163,6 +166,17 @@ async function getJobSettings() {
       1,
       Number(settings.freeProxyLiveFailThreshold) || DEFAULT_LIVE_FAIL_THRESHOLD
     );
+    // Cap on how many Tier 1 (bottom pool) proxies are probed per check tick.
+    // Tier 1 can hold thousands of freshly-scraped proxies; probing all of them
+    // (3 targets × 5s each) can overrun the check interval and starve later
+    // ticks. Oldest-tested rows are probed first so the whole pool still rotates
+    // across ticks. 0 = unlimited (historical behaviour).
+    const tier1TestBatchLimit = Math.max(
+      0,
+      settings.freeProxyTier1TestBatchLimit !== undefined
+        ? Number(settings.freeProxyTier1TestBatchLimit)
+        : DEFAULT_TIER1_TEST_BATCH_LIMIT
+    );
 
     return {
       enabled,
@@ -179,6 +193,7 @@ async function getJobSettings() {
       tier2PromoteThreshold,
       tier2DemoteThreshold,
       liveFailThreshold,
+      tier1TestBatchLimit,
       autoDistribute,
     };
   } catch (err) {
@@ -198,6 +213,7 @@ async function getJobSettings() {
       tier2PromoteThreshold: 10,
       tier2DemoteThreshold: 3,
       liveFailThreshold: DEFAULT_LIVE_FAIL_THRESHOLD,
+      tier1TestBatchLimit: DEFAULT_TIER1_TEST_BATCH_LIMIT,
       autoDistribute: process.env.FREE_PROXY_AUTO_DISTRIBUTE === "true",
     };
   }
@@ -431,10 +447,7 @@ export async function demoteTier3Proxy(
     db.prepare(
       "UPDATE free_proxies SET tier = ?, in_pool = 0, pool_proxy_id = NULL, consecutive_successes = 0, consecutive_failures = ?, updated_at = ? WHERE id = ?"
     ).run(targetTier, Math.max(0, failureHeadStart), now, freeProxy.id);
-    log.info(
-      { host, targetTier, failureHeadStart },
-      `Demoted Tier 3 proxy to Tier ${targetTier}`
-    );
+    log.info({ host, targetTier, failureHeadStart }, `Demoted Tier 3 proxy to Tier ${targetTier}`);
   } else {
     log.info({ host, registryId }, "Removed Tier 3 proxy (no free_proxies record to demote)");
   }
@@ -558,8 +571,7 @@ async function promoteBestTier2ToGlobal(
 
   // `success_count = test_count` (a perfect lifetime record) was previously
   // hardcoded; wiring minSuccessRate lets the operator accept, e.g., ≥95%.
-  const successRateClause =
-    "test_count > 0 AND (success_count * 100.0 / test_count) >= ?";
+  const successRateClause = "test_count > 0 AND (success_count * 100.0 / test_count) >= ?";
   const query =
     settings.countryFilter === "ALL"
       ? `SELECT id, host, port, type, quality_score, latency_ms
@@ -892,10 +904,7 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
               "Tier 2 proxy promoted to Tier 3 (consecutive-success streak)"
             );
           } catch (err) {
-            log.warn(
-              { err, host: candidate.host },
-              "Tier 2 → Tier 3 promotion failed (non-fatal)"
-            );
+            log.warn({ err, host: candidate.host }, "Tier 2 → Tier 3 promotion failed (non-fatal)");
           }
         }
         if (promotionQueue.length > 0) {
@@ -915,12 +924,21 @@ export async function runFreeProxyCheckTick(settingsSnapshot?: JobSettings): Pro
     // ================================================================
     try {
       const db = getDbInstance();
-      const query =
+      // Probe the least-recently-validated rows first so the intake pool rotates
+      // evenly across ticks; cap the batch (unless unlimited) to keep a large
+      // Tier 1 from overrunning the check interval. NULLs (never validated) sort
+      // first under ASC, so brand-new scrapes are still probed promptly.
+      const orderClause = " ORDER BY last_validated ASC";
+      const limitClause = settings.tier1TestBatchLimit > 0 ? " LIMIT ?" : "";
+      const baseWhere =
         settings.countryFilter === "ALL"
           ? "SELECT id, type, host, port, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 1 AND in_pool = 0"
           : "SELECT id, type, host, port, consecutive_successes, consecutive_failures FROM free_proxies WHERE tier = 1 AND in_pool = 0 AND UPPER(country_code) = ?";
+      const query = baseWhere + orderClause + limitClause;
 
-      const params = settings.countryFilter === "ALL" ? [] : [settings.countryFilter];
+      const params: Array<string | number> =
+        settings.countryFilter === "ALL" ? [] : [settings.countryFilter];
+      if (settings.tier1TestBatchLimit > 0) params.push(settings.tier1TestBatchLimit);
       const tier1Proxies = db.prepare(query).all(...params) as Array<{
         id: string;
         type: string;
@@ -1041,17 +1059,26 @@ export async function runFreeProxySyncTick(settingsSnapshot?: JobSettings): Prom
     // Step 1: Sync sources
     await syncFreeProxySources();
 
-    // Step 2: Delete non-matching country proxies from free_proxies
+    // Step 2: Delete free proxies that can never match the active country filter.
+    // Under a specific (non-ALL) filter, the tier test/promote queries all gate
+    // on `UPPER(country_code) = filter`, so both wrong-country AND unknown-country
+    // (NULL) rows are permanently untestable, unpromotable dead weight — e.g. the
+    // 1proxy source imports thousands of rows with no country. Previously only
+    // wrong-country rows were pruned; NULL-country rows accumulated forever. Pooled
+    // rows (in_pool = 1) are always spared so an in-use proxy is never disturbed.
     try {
       if (settings.countryFilter && settings.countryFilter !== "ALL") {
         const db = getDbInstance();
         const deleted = db
           .prepare(
-            "DELETE FROM free_proxies WHERE country_code IS NOT NULL AND UPPER(country_code) != ? AND in_pool = 0"
+            "DELETE FROM free_proxies WHERE in_pool = 0 AND (country_code IS NULL OR UPPER(country_code) != ?)"
           )
           .run(settings.countryFilter);
         if (deleted.changes > 0) {
-          log.info({ deleted: deleted.changes }, "Cleaned up non-matching country free proxies");
+          log.info(
+            { deleted: deleted.changes },
+            "Cleaned up non-matching / unknown-country free proxies"
+          );
         }
       }
     } catch (err) {

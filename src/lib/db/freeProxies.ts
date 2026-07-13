@@ -72,10 +72,15 @@ export async function upsertFreeProxy(
     const countryFilter = String(
       settings.freeProxyCountryFilter || process.env.FREE_PROXY_COUNTRY_FILTER || "US"
     ).toUpperCase();
+    // Under a specific (non-ALL) country filter, skip both wrong-country AND
+    // unknown-country (null/empty) proxies. The tier test/promote queries gate on
+    // `UPPER(country_code) = filter`, so an imported unknown-country row can never
+    // be tested or promoted — it is permanent dead weight (e.g. the 1proxy source
+    // reports no country). Keeping it out at ingest prevents the table from
+    // filling with rows the pipeline will never use.
     if (
       countryFilter !== "ALL" &&
-      item.countryCode &&
-      item.countryCode.toUpperCase() !== countryFilter
+      (!item.countryCode || item.countryCode.toUpperCase() !== countryFilter)
     ) {
       return { id: "", action: "skipped" };
     }
@@ -418,9 +423,11 @@ const FREE_PROXY_SYNC_KEY = "last_sync_at";
 export async function recordFreeProxySync(at?: string): Promise<string> {
   const db = getDbInstance();
   const ts = at ?? new Date().toISOString();
-  db.prepare(
-    "INSERT OR REPLACE INTO key_value (namespace, key, value) VALUES (?, ?, ?)"
-  ).run(FREE_PROXY_SYNC_NAMESPACE, FREE_PROXY_SYNC_KEY, ts);
+  db.prepare("INSERT OR REPLACE INTO key_value (namespace, key, value) VALUES (?, ?, ?)").run(
+    FREE_PROXY_SYNC_NAMESPACE,
+    FREE_PROXY_SYNC_KEY,
+    ts
+  );
   backupDbFile("pre-write");
   return ts;
 }
