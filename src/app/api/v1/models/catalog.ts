@@ -22,7 +22,11 @@ import { resolveNestedComboTargets } from "@omniroute/open-sse/services/combo";
 import { getAllSyncedAvailableModels, type SyncedAvailableModel } from "@/lib/db/models";
 import { getCompatibleFallbackModels } from "@/lib/providers/managedAvailableModels";
 import { getOpenRouterCatalog } from "@/lib/catalog/openrouterCatalog";
-import { getCanonicalRootId } from "@/lib/catalog/generateVirtualCatalog";
+import {
+  getCanonicalTextGenerationModelId,
+  isTextGenerationCatalogModel,
+  sanitizeTextGenerationCatalogId,
+} from "@/lib/catalog/textGenerationCatalogPolicy";
 import { hasEligibleConnectionForModel } from "@/domain/connectionModelRules";
 import {
   INTERNAL_PROXY_ERROR,
@@ -78,65 +82,6 @@ const ALLOWED_NVIDIA_MODELS = new Set([
   "stepfun-ai/step-3.5-flash",
   "nvidia/nemotron-3-super-120b-a12b",
   "deepseek-ai/deepseek-v4-pro",
-]);
-
-const FORCED_CONSOLIDATION_MODELS = new Set([
-  "claude-sonnet-4-6",
-  "claude-opus-4-7",
-  "claude-haiku-4-5",
-  "minimax-m3",
-  "kimi-2.6",
-  "gpt-oss-120b",
-  "gpt-oss-20b",
-  "glm-5.1",
-  "gpt-5-5",
-  "gpt-5-5-high",
-  "gpt-5-4",
-  "gpt-5-4-high",
-  "gpt-5-4-mini",
-  "gpt-5-3",
-  "gpt-4o",
-  "o3-mini",
-  "deepseek-v4",
-  "deepseek-v3",
-  "deepseek-r1",
-  "gemini-3-1-pro",
-  "gemini-3-flash",
-  "gemini-3-1-flash-lite",
-  "qwen3-coder",
-  "llama-4-scout",
-  "mistral-small",
-  "mistral-large",
-  "devstral-2",
-  "ling-2-6",
-  "qwen3-6",
-  "gemma-4-31b",
-  "step-3.5-flash",
-  "nemotron-3-super",
-]);
-
-const BLOCKLISTED_ROOT_IDS = new Set([
-  "codex-auto-review",
-  "big-pickle",
-  "nemotron-3-super-free",
-  "trinity-large-preview-free",
-  "pepper-1",
-  "gemini-pro-agent",
-  "gpt-5-2",
-]);
-
-const HIDDEN_PROVIDER_PREFIXES = new Set([
-  "veo-free",
-  "veoaifree-web",
-  "chipotle",
-  "pepper",
-  // These providers expose models we want cleaned/consolidated — suppress raw entries
-  // that weren't picked up by the virtual catalog generator
-  "ddgw",
-  "duckduckgo-web",
-  "theoldllm",
-  "tllm",
-  "oc",
 ]);
 
 const VISION_MODEL_KEYWORDS = [
@@ -1453,66 +1398,35 @@ export async function getUnifiedModelsResponse(
       return maybeOmitCatalogModelName(listedModel, includeModelNames);
     });
 
-    // ── Virtual Catalog Deduplication ──────────────────────────────────────
-    // When virtual catalog is active, remove provider-prefixed model entries
-    // whose root model ID is already covered by a virtual catalog entry.
-    // This ensures customers see "claude-sonnet-4-6" once, not
-    // "kr/claude-sonnet-4-6", "gh/claude-sonnet-4-6", etc.
-    let outputModels = enrichedModels;
+    // Product policy: /v1/models advertises only text-generation models.
+    // Specialty models remain available through their dedicated endpoint catalogs.
+    let outputModels = enrichedModels.filter(isTextGenerationCatalogModel);
+
+    // When virtual catalog mode is active, remove provider-prefixed entries whose
+    // exact canonical identity is already represented by a clean virtual model.
     if (virtualCatalogEnabled && virtualCatalogRootIds.size > 0) {
-      // Helper: sanitize a model ID the same way the generator does
-      // (slashes → hyphens, strip special chars) to match combo names
-      const sanitize = (id: string) =>
-        id
-          .replace(/\//g, "-")
-          .replace(/[^a-zA-Z0-9._-]/g, "-")
-          .replace(/-{2,}/g, "-")
-          .replace(/^-+|-+$/g, "");
-
-      // getCanonicalRootId is imported from generateVirtualCatalog.ts — this filter must
-      // group raw provider-prefixed duplicates the same way the generator groups combos,
-      // or a model already covered by a virtual catalog entry leaks through as a duplicate.
-      const isBlocklisted = (rootId: string, modelId: string): boolean => {
-        const providerPrefix = modelId.includes("/") ? modelId.split("/")[0] : "";
-        if (HIDDEN_PROVIDER_PREFIXES.has(providerPrefix)) return true;
-        if (BLOCKLISTED_ROOT_IDS.has(rootId)) return true;
-        const lower = rootId.toLowerCase();
-        if (lower.includes("codex-auto-review") || lower.includes("codex_auto")) return true;
-        if (lower === "gpt-5-2" || lower === "gpt-5.2") return true;
-        if (lower.includes("codex-spark") || lower.includes("3-codex")) return true;
-        return false;
-      };
-
-      outputModels = enrichedModels.filter((model) => {
-        const modelId = typeof model.id === "string" ? model.id : "";
-        const rootId = model.root || modelId;
-        const canonical = getCanonicalRootId(rootId);
-
-        // Always keep virtual catalog (combo) entries — they are the clean consolidated entries
+      outputModels = outputModels.filter((model) => {
         if (model.owned_by === virtualCatalogBrand) return true;
 
-        // Remove blocklisted models (internal tools, junk, video-gen, etc.)
-        if (isBlocklisted(canonical, modelId)) return false;
-        if (isBlocklisted(rootId, modelId)) return false;
-
-        // Remove provider-prefixed duplicates that are now covered by a virtual catalog entry
+        const modelId = typeof model.id === "string" ? model.id : "";
+        const rootId = typeof model.root === "string" ? model.root : modelId;
+        const canonical = getCanonicalTextGenerationModelId(rootId);
         if (virtualCatalogRootIds.has(canonical)) return false;
-        if (virtualCatalogRootIds.has(sanitize(canonical))) return false;
+        if (virtualCatalogRootIds.has(sanitizeTextGenerationCatalogId(canonical))) return false;
 
-        // Also check unprefixed part of "alias/rootId" style IDs
         const slashIdx = modelId.indexOf("/");
         if (slashIdx > 0) {
-          const unprefixedId = modelId.slice(slashIdx + 1);
-          const canonicalUnprefixed = getCanonicalRootId(unprefixedId);
-          // Blocklist check for unprefixed root too
-          if (isBlocklisted(canonicalUnprefixed, modelId)) return false;
+          const canonicalUnprefixed = getCanonicalTextGenerationModelId(
+            modelId.slice(slashIdx + 1)
+          );
           if (virtualCatalogRootIds.has(canonicalUnprefixed)) return false;
-          if (virtualCatalogRootIds.has(sanitize(canonicalUnprefixed))) return false;
+          if (virtualCatalogRootIds.has(sanitizeTextGenerationCatalogId(canonicalUnprefixed))) {
+            return false;
+          }
         }
         return true;
       });
     }
-    // ──────────────────────────────────────────────────────────────────────
 
     // Codex CLI compatibility: its model-catalog refresh (codex_models_manager) does
     // GET /v1/models?client_version=<v> and decodes a JSON object with a TOP-LEVEL

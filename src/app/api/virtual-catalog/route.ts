@@ -12,7 +12,10 @@ import { isDashboardSessionAuthenticated } from "@/shared/utils/apiAuth";
 import { getSettings, updateSettings } from "@/lib/db/settings";
 import {
   generateVirtualCatalog,
+  getManualCatalogInventory,
   getVirtualCatalogEntries,
+  getVirtualCatalogQuarantinedModels,
+  setManualCatalogMembership,
 } from "@/lib/catalog/generateVirtualCatalog";
 
 async function requireAdmin(request: Request): Promise<Response | null> {
@@ -34,7 +37,12 @@ export async function GET(request: Request) {
   if (authError) return authError;
 
   try {
-    const [entries, settings] = await Promise.all([getVirtualCatalogEntries(), getSettings()]);
+    const [entries, quarantined, inventory, settings] = await Promise.all([
+      getVirtualCatalogEntries(),
+      getVirtualCatalogQuarantinedModels(),
+      getManualCatalogInventory(),
+      getSettings(),
+    ]);
 
     return NextResponse.json({
       enabled: settings.virtualCatalogEnabled === true,
@@ -47,6 +55,10 @@ export async function GET(request: Request) {
         : [],
       entries,
       totalModels: entries.length,
+      quarantined,
+      totalQuarantined: quarantined.length,
+      inventory,
+      totalProviderModels: inventory.length,
     });
   } catch (error) {
     return NextResponse.json(
@@ -129,10 +141,27 @@ export async function POST(request: Request) {
       });
     }
 
+    if (action === "membership") {
+      const modelId = typeof body.modelId === "string" ? body.modelId.trim() : "";
+      if (!modelId || typeof body.included !== "boolean") {
+        return NextResponse.json(
+          {
+            error: {
+              message: "membership requires modelId and included",
+              code: "bad_request",
+            },
+          },
+          { status: 400 }
+        );
+      }
+      const result = await setManualCatalogMembership(modelId, body.included);
+      return NextResponse.json({ success: true, ...result });
+    }
+
     return NextResponse.json(
       {
         error: {
-          message: `Unknown action: ${action}. Use "generate" or "toggle".`,
+          message: `Unknown action: ${action}. Use "generate", "toggle", or "membership".`,
           code: "bad_request",
         },
       },

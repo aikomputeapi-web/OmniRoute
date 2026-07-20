@@ -21,13 +21,21 @@ import {
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import { getAllSyncedAvailableModels } from "@/lib/db/models";
-import { getCombos, createCombo, deleteCombo } from "@/lib/db/combos";
+import { getCombos, createCombo, updateCombo, deleteCombo } from "@/lib/db/combos";
 import {
   getModelComboMappings,
   createModelComboMapping,
+  updateModelComboMapping,
   deleteModelComboMapping,
 } from "@/lib/db/modelComboMappings";
 import { hasEligibleConnectionForModel } from "@/domain/connectionModelRules";
+import {
+  type CatalogExclusionReason,
+  getCanonicalTextGenerationModelId,
+  getTextGenerationCatalogExclusionReason,
+  isTextGenerationCatalogModel,
+  sanitizeTextGenerationCatalogId,
+} from "@/lib/catalog/textGenerationCatalogPolicy";
 
 // ──────────────────────────────────────────────────────────
 // Types
@@ -76,6 +84,37 @@ export interface VirtualCatalogResult {
   warnings: string[];
 }
 
+export interface QuarantinedCatalogModel {
+  id: string;
+  rootId: string;
+  providerId: string;
+  alias: string;
+  type: ProviderModelEntry["type"];
+  reason: CatalogExclusionReason;
+}
+
+export interface ManualCatalogInventoryEntry {
+  id: string;
+  rootId: string;
+  canonicalId: string;
+  providerId: string;
+  alias: string;
+  type: ProviderModelEntry["type"];
+  eligible: boolean;
+  exclusionReason: CatalogExclusionReason | null;
+  inVirtualCatalog: boolean;
+  override: "included" | "excluded" | null;
+}
+
+function getStringSettingSet(settings: Record<string, unknown>, key: string): Set<string> {
+  const value = settings[key];
+  return new Set(
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+      : []
+  );
+}
+
 // Tag used to identify auto-generated virtual catalog combos
 const VIRTUAL_CATALOG_TAG = "__virtual_catalog__";
 
@@ -100,317 +139,14 @@ const ALLOWED_NVIDIA_MODELS = new Set([
   "deepseek-ai/deepseek-v4-pro",
 ]);
 
-const FORCED_CONSOLIDATION_MODELS = new Set([
-  "claude-sonnet-4-6",
-  "claude-opus-4-7",
-  "claude-haiku-4-5",
-  "minimax-m3",
-  "kimi-2.6",
-  "gpt-oss-120b",
-  "gpt-oss-20b",
-  "glm-5.1",
-  "gpt-5-5",
-  "gpt-5-5-high",
-  "gpt-5-4",
-  "gpt-5-4-high",
-  "gpt-5-4-mini",
-  "gpt-5-4-nano",
-  "gpt-5-3",
-  "gpt-4o",
-  "gpt-4.1",
-  "gpt-4.1-mini",
-  "gpt-5",
-  "gpt-5-codex",
-  "gpt-5-codex-mini",
-  "gpt-5.1",
-  "gpt-5.1-codex",
-  "gpt-5.1-codex-max",
-  "gpt-5.1-codex-mini",
-  "gpt-5.2-codex",
-  "gpt-5.6-luna",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-image-1",
-  "gpt-image-1.5",
-  "gpt-image-2",
-  "o3-mini",
-  "deepseek-v4",
-  "deepseek-v3",
-  "deepseek-r1",
-  "gemini-3-1-pro",
-  "gemini-3-flash",
-  "gemini-3-1-flash-lite",
-  "qwen3-coder",
-  "llama-4-scout",
-  "mistral-small",
-  "mistral-large",
-  "devstral-2",
-  "ling-2-6",
-  "qwen3-6",
-  "gemma-4-31b",
-  "step-3.5-flash",
-  "nemotron-3-super",
-]);
-
-// Models that should never appear in the customer-facing /v1/models list
-const BLOCKLISTED_ROOT_IDS = new Set([
-  "codex-auto-review",
-  "big-pickle",
-  "nemotron-3-super-free",
-  "trinity-large-preview-free",
-  "pepper-1",
-  "gemini-pro-agent",
-  "gpt-5-2", // superceded
-]);
-
-// Provider prefixes whose models should be hidden entirely unless consolidated
-const HIDDEN_PROVIDER_PREFIXES = new Set([
-  "veo-free",
-  "veoaifree-web",
-  "chipotle",
-  "pepper",
-  "ddgw",
-  "duckduckgo-web",
-  "theoldllm",
-  "tllm",
-  "oc",
-]);
-
-/**
- * Sanitize a model root ID into a safe combo name.
- * Replaces slashes with hyphens so "deepseek/deepseek-v4-pro" → "deepseek-deepseek-v4-pro".
- * Strips leading/trailing hyphens and collapses consecutive hyphens.
- */
+/** Sanitize a model root ID into a safe combo name. */
 function sanitizeComboName(rootId: string): string {
-  return rootId
-    .replace(/\//g, "-")
-    .replace(/[^a-zA-Z0-9._-]/g, "-")
-    .replace(/-{2,}/g, "-")
-    .replace(/^-+|-+$/g, "");
+  return sanitizeTextGenerationCatalogId(rootId);
 }
 
+/** @deprecated Import the shared catalog policy in new code. */
 export function getCanonicalRootId(rootId: string): string {
-  const lower = rootId.toLowerCase();
-
-  // ── Claude family ──────────────────────────────────────────
-  if (lower.includes("claude") && lower.includes("sonnet")) {
-    return "claude-sonnet-4-6";
-  }
-  if (lower.includes("claude") && lower.includes("opus")) {
-    return "claude-opus-4-7";
-  }
-  if (lower.includes("claude") && lower.includes("haiku")) {
-    return "claude-haiku-4-5";
-  }
-
-  // ── GPT family ─────────────────────────────────────────────
-  if (lower.includes("gpt-oss-120b")) return "gpt-oss-120b";
-  if (lower.includes("gpt-oss-20b")) return "gpt-oss-20b";
-  if (
-    lower.includes("gpt-5.5-high") ||
-    lower.includes("gpt-5-5-high") ||
-    lower.includes("gpt-5.5-xhigh") ||
-    lower.includes("gpt-5-5-xhigh")
-  ) {
-    return "gpt-5-5-high";
-  }
-  if (
-    (lower.includes("gpt-5.5") || lower.includes("gpt-5-5") || lower.includes("gpt_5_5")) &&
-    !lower.includes("high")
-  ) {
-    return "gpt-5-5";
-  }
-  if (
-    lower.includes("gpt-5.4-high") ||
-    lower.includes("gpt-5-4-high") ||
-    lower.includes("gpt-5.4-xhigh") ||
-    lower.includes("gpt-5-4-xhigh")
-  ) {
-    return "gpt-5-4-high";
-  }
-  if (
-    (lower.includes("gpt-5.4") || lower.includes("gpt-5-4") || lower.includes("gpt_5_4")) &&
-    !lower.includes("mini") &&
-    !lower.includes("high") &&
-    !lower.includes("nano")
-  ) {
-    return "gpt-5-4";
-  }
-  if (
-    lower.includes("gpt-5.4-mini") ||
-    lower.includes("gpt-5-4-mini") ||
-    lower.includes("gpt-5-mini") ||
-    lower.includes("gpt-5.mini") ||
-    lower.includes("gpt-4o-mini")
-  ) {
-    return "gpt-5-4-mini";
-  }
-  if (
-    lower.includes("gpt-5.4-nano") ||
-    lower.includes("gpt-5-4-nano") ||
-    lower.includes("gpt_5_4_nano")
-  ) {
-    return "gpt-5-4-nano";
-  }
-  if (lower.includes("gpt-5.3") || lower.includes("gpt-5-3")) {
-    return "gpt-5-3";
-  }
-  if (lower.includes("gpt-4o") || lower.includes("gpt_4o")) {
-    return "gpt-4o";
-  }
-  if (
-    lower.includes("gpt-4.1-mini") ||
-    lower.includes("gpt-4-1-mini") ||
-    lower.includes("gpt_4_1_mini")
-  ) {
-    return "gpt-4.1-mini";
-  }
-  if (lower.includes("gpt-4.1") || lower.includes("gpt-4-1") || lower.includes("gpt_4_1")) {
-    return "gpt-4.1";
-  }
-
-  // gpt-5 / gpt-5.1 / gpt-5.2 / codex family. Some providers (e.g. j3) namespace
-  // a subset of their catalog with a sub-server label baked directly into the raw
-  // model id (e.g. "server1/gpt-5.1-codex" or "15/gpt-5.2") instead of a clean id
-  // ("gpt-5.1-codex"). Substring checks — not exact match — so both forms collapse
-  // into the same bucket regardless of the extra label, mirroring gpt-5.4/gpt-5.5 above.
-  if (lower.includes("gpt-image-2")) {
-    return "gpt-image-2";
-  }
-  if (lower.includes("gpt-image-1.5") || lower.includes("gpt-image-1-5")) {
-    return "gpt-image-1.5";
-  }
-  if (lower.includes("gpt-image-1")) {
-    return "gpt-image-1";
-  }
-  if (
-    lower.includes("gpt-5.1-codex-max") ||
-    lower.includes("gpt-5-1-codex-max") ||
-    lower.includes("gpt_5_1_codex_max")
-  ) {
-    return "gpt-5.1-codex-max";
-  }
-  if (
-    lower.includes("gpt-5.1-codex-mini") ||
-    lower.includes("gpt-5-1-codex-mini") ||
-    lower.includes("gpt_5_1_codex_mini")
-  ) {
-    return "gpt-5.1-codex-mini";
-  }
-  if (
-    (lower.includes("gpt-5.1-codex") ||
-      lower.includes("gpt-5-1-codex") ||
-      lower.includes("gpt_5_1_codex")) &&
-    !lower.includes("max") &&
-    !lower.includes("mini")
-  ) {
-    return "gpt-5.1-codex";
-  }
-  if (lower.includes("gpt-5.1") || lower.includes("gpt-5-1") || lower.includes("gpt_5_1")) {
-    return "gpt-5.1";
-  }
-  if (
-    lower.includes("gpt-5.2-codex") ||
-    lower.includes("gpt-5-2-codex") ||
-    lower.includes("gpt_5_2_codex")
-  ) {
-    return "gpt-5.2-codex";
-  }
-  if (lower.includes("gpt-5.2") || lower.includes("gpt-5-2") || lower.includes("gpt_5_2")) {
-    return "gpt-5.2";
-  }
-  if (lower.includes("gpt-5-codex-mini")) {
-    return "gpt-5-codex-mini";
-  }
-  if (lower.includes("gpt-5-codex") && !lower.includes("mini")) {
-    return "gpt-5-codex";
-  }
-  // gpt-5.6 preview codenames (luna/sol/terra) are distinct experimental models, not
-  // version variants of the same model — each keeps its own bucket instead of falling
-  // into the generic "gpt-5" catch-all below (which would otherwise merge all three).
-  if (lower.includes("gpt-5.6-luna") || lower.includes("gpt-5-6-luna")) {
-    return "gpt-5.6-luna";
-  }
-  if (lower.includes("gpt-5.6-sol") || lower.includes("gpt-5-6-sol")) {
-    return "gpt-5.6-sol";
-  }
-  if (lower.includes("gpt-5.6-terra") || lower.includes("gpt-5-6-terra")) {
-    return "gpt-5.6-terra";
-  }
-  if (lower.includes("gpt-5")) {
-    return "gpt-5";
-  }
-
-  // ── Gemini family ──────────────────────────────────────────
-  if (
-    lower.includes("gemini") &&
-    lower.includes("pro") &&
-    !lower.includes("flash") &&
-    !lower.includes("lite") &&
-    !lower.includes("agent")
-  ) {
-    // gemini 3.1 pro variants
-    if (
-      lower.includes("3.1") ||
-      lower.includes("3-1") ||
-      lower.includes("3_pro") ||
-      lower.includes("gemini_3_pro")
-    ) {
-      return "gemini-3-1-pro";
-    }
-    if (lower.includes("2.5") || lower.includes("2-5")) {
-      return "gemini-2-5-pro";
-    }
-    return "gemini-3-1-pro";
-  }
-  if (lower.includes("gemini") && lower.includes("flash") && lower.includes("lite")) {
-    return "gemini-3-1-flash-lite";
-  }
-  if (lower.includes("gemini") && lower.includes("flash") && !lower.includes("lite")) {
-    if (lower.includes("2.5") || lower.includes("2-5")) {
-      return "gemini-2-5-flash";
-    }
-    return "gemini-3-flash";
-  }
-
-  // ── DeepSeek family ────────────────────────────────────────
-  if (lower.includes("deepseek") && lower.includes("r1")) return "deepseek-r1";
-  if (lower.includes("deepseek") && (lower.includes("v4") || lower.includes("v-4"))) return "deepseek-v4";
-  if (lower.includes("deepseek")) return "deepseek-v3";
-
-  // ── Reasoning ──────────────────────────────────────────────
-  if (lower.includes("o3-mini") || lower === "o3mini") return "o3-mini";
-
-  // ── Open weights ───────────────────────────────────────────
-  if (lower.includes("llama") && lower.includes("scout")) return "llama-4-scout";
-  if (lower.includes("mistral") && lower.includes("large")) return "mistral-large";
-  if (lower.includes("mistral") && lower.includes("small")) return "mistral-small";
-  if (lower.includes("devstral")) return "devstral-2";
-  if (lower.includes("ling") && (lower.includes("2.6") || lower.includes("2-6"))) return "ling-2-6";
-  if (lower.includes("qwen") && !lower.includes("coder")) return "qwen3-6";
-  if (lower.includes("gemma") && lower.includes("4") && lower.includes("31b")) return "gemma-4-31b";
-  if (lower.includes("step") && lower.includes("3.5")) return "step-3.5-flash";
-  if (lower.includes("nemotron") && lower.includes("3") && lower.includes("super")) return "nemotron-3-super";
-
-  // ── Other families ─────────────────────────────────────────
-  if (lower.includes("minimax")) return "minimax-m3";
-  if (lower.includes("kimi")) return "kimi-2.6";
-  if (lower.includes("glm")) return "glm-5.1";
-  if (lower.includes("qwen") && lower.includes("coder")) return "qwen3-coder";
-
-  return rootId;
-}
-
-/** Returns true if a model should be completely excluded from the customer catalog */
-export function isBlocklistedForCatalog(rootId: string, providerPrefix: string): boolean {
-  if (HIDDEN_PROVIDER_PREFIXES.has(providerPrefix)) return true;
-  if (BLOCKLISTED_ROOT_IDS.has(rootId)) return true;
-  const lower = rootId.toLowerCase();
-  if (lower.includes("codex-auto-review") || lower.includes("codex_auto")) return true;
-  if (lower === "gpt-5-2" || lower === "gpt-5.2") return true;
-  if (lower.includes("codex-spark") || lower.includes("3-codex") || lower.includes("3.codex"))
-    return true;
-  return false;
+  return getCanonicalTextGenerationModelId(rootId);
 }
 
 function parseVersion(id: string) {
@@ -719,8 +455,18 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
     }
   }
 
-  // 2. Group by root model ID (only chat models for now)
-  const chatModels = allModels.filter((m) => m.type === "chat");
+  // 2. Group only customer-callable text-generation models by exact canonical identity.
+  // Manual provider-target exclusions are additive and survive scheduled regeneration.
+  const manualIncluded = getStringSettingSet(settings, "virtualCatalogManualIncludedModels");
+  const manualExcluded = getStringSettingSet(settings, "virtualCatalogManualExcludedModels");
+  const chatModels = allModels.filter((model) => {
+    const eligible =
+      model.type === "chat" &&
+      isTextGenerationCatalogModel({ id: model.prefixedId, root: model.rootId });
+    if (!eligible) return false;
+    if (manualIncluded.has(model.prefixedId)) return true;
+    return !manualExcluded.has(model.prefixedId);
+  });
   const grouped = new Map<string, ProviderModelEntry[]>();
   for (const model of chatModels) {
     const canonicalId = getCanonicalRootId(model.rootId);
@@ -735,12 +481,14 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
     );
   }
 
-  // 3. Clean up old virtual catalog combos + mappings
+  // 3. Snapshot existing generated state for non-destructive reconciliation.
   const existingCombos = await getCombos();
   const virtualCombos = existingCombos.filter((c: Record<string, unknown>) =>
     (c.tags as string[] | undefined)?.includes(VIRTUAL_CATALOG_TAG)
   );
-  // Build a set of non-virtual combo names to avoid collisions
+  const virtualCombosByName = new Map(
+    virtualCombos.map((combo) => [combo.name as string, combo] as const)
+  );
   const nonVirtualComboNames = new Set(
     existingCombos
       .filter(
@@ -750,34 +498,12 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       .map((c: Record<string, unknown>) => c.name as string)
       .filter(Boolean)
   );
-
   const existingMappings = await getModelComboMappings();
   const virtualMappings = existingMappings.filter((m) => m.description === VIRTUAL_CATALOG_TAG);
+  const desiredComboNames = new Set<string>();
 
-  // Delete old virtual catalog entries
-  for (const combo of virtualCombos) {
-    try {
-      await deleteCombo(combo.id as string);
-      result.deleted++;
-    } catch (err) {
-      result.errors.push(
-        `Failed to delete old combo ${combo.name}: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-  }
-  for (const mapping of virtualMappings) {
-    try {
-      await deleteModelComboMapping(mapping.id);
-    } catch {
-      /* ignore cleanup errors */
-    }
-  }
-
-  // 4. Create new combos + mappings for each grouped model
+  // 4. Upsert desired combos and mappings before removing stale generated state.
   for (const [rootId, variants] of grouped) {
-    // Consolidate all chat models to expose them prefix-free under the virtual catalog.
-    const uniqueProviders = new Set(variants.map((v) => v.providerId));
-
     // Sanitize the root ID for use as a combo name (handles slashes, special chars)
     const comboName = sanitizeComboName(rootId);
     if (!comboName) {
@@ -793,7 +519,9 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
       continue;
     }
 
-    // Sort by provider priority (highest first), then by version (latest first)
+    desiredComboNames.add(comboName);
+
+    // Sort by provider priority (highest first), then by exact alias spelling.
     const sorted = variants.sort((a, b) => {
       const priorityA =
         providerOrder.length > 0
@@ -812,242 +540,59 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
     });
 
     try {
-      // Create combo with priority strategy
-      const combo = await createCombo({
+      const comboPayload = {
         name: comboName,
         strategy: "priority",
-        isHidden: true, // Hidden from raw catalog — only shown via virtual catalog
+        isHidden: true,
         isActive: true,
         tags: [VIRTUAL_CATALOG_TAG],
-        models: sorted.map((v, index) => ({
+        models: sorted.map((variant, index) => ({
           kind: "model",
-          model: v.prefixedId,
-          providerId: v.alias,
+          model: variant.prefixedId,
+          providerId: variant.alias,
           weight: Math.max(0, 100 - index * 10),
         })),
-      });
+      };
+      const existingCombo = virtualCombosByName.get(comboName);
+      const combo = existingCombo
+        ? await updateCombo(existingCombo.id as string, comboPayload)
+        : await createCombo(comboPayload);
+      if (!combo) throw new Error("Combo upsert returned no record");
+      if (existingCombo) result.updated++;
+      else result.created++;
 
-      // Create model-combo mapping for the sanitized name
-      await createModelComboMapping({
-        pattern: comboName,
-        comboId: combo.id as string,
-        priority: 100,
-        enabled: true,
-        description: VIRTUAL_CATALOG_TAG,
-      });
+      const desiredPatterns = new Set([comboName, rootId, ...variants.map((v) => v.rootId)]);
+      const comboMappings = virtualMappings.filter((mapping) => mapping.comboId === combo.id);
+      const existingMappingsByPattern = new Map(
+        comboMappings.map((mapping) => [mapping.pattern, mapping] as const)
+      );
 
-      // If the sanitized name differs from rootId, also map the original
-      // so requests using the raw model ID still route correctly
-      if (comboName !== rootId) {
-        try {
-          await createModelComboMapping({
-            pattern: rootId,
+      for (const pattern of desiredPatterns) {
+        const existingMapping = existingMappingsByPattern.get(pattern);
+        if (existingMapping) {
+          await updateModelComboMapping(existingMapping.id, {
             comboId: combo.id as string,
             priority: 100,
             enabled: true,
             description: VIRTUAL_CATALOG_TAG,
           });
-        } catch {
-          /* non-critical: sanitized name mapping is enough */
+        } else {
+          await createModelComboMapping({
+            pattern,
+            comboId: combo.id as string,
+            priority: 100,
+            enabled: true,
+            description: VIRTUAL_CATALOG_TAG,
+          });
         }
       }
 
-      // Map all individual raw variant model IDs in this group to the same combo
-      // so requests using specific version names still route correctly
-      const uniqueRawIds = new Set(variants.map((v) => v.rootId));
-      for (const rawId of uniqueRawIds) {
-        if (rawId !== rootId && rawId !== comboName) {
-          try {
-            await createModelComboMapping({
-              pattern: rawId,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {
-            /* ignore duplicate or error */
-          }
+      for (const mapping of comboMappings) {
+        if (!desiredPatterns.has(mapping.pattern)) {
+          await deleteModelComboMapping(mapping.id);
         }
       }
 
-      // Explicitly map all known allowed names (including inactive provider variants)
-      // for our forced consolidation models to ensure client request compatibility.
-      if (rootId === "gpt-oss-120b") {
-        const extraPatterns = ["openai/gpt-oss-120b:free", "openai/gpt-oss-120b", "gpt-oss-120b"];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "gpt-oss-20b") {
-        const extraPatterns = ["openai/gpt-oss-20b:free", "openai/gpt-oss-20b", "gpt-oss-20b"];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "gpt-5-5-high") {
-        const extraPatterns = [
-          "gpt-5-5-high",
-          "gpt-5.5-high",
-          "gpt-5-5-xhigh",
-          "gpt-5.5-xhigh",
-          "openai/gpt-5.5-high",
-          "openai/gpt-5-5-high",
-        ];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "gpt-5-4-high") {
-        const extraPatterns = [
-          "gpt-5-4-high",
-          "gpt-5.4-high",
-          "gpt-5-4-xhigh",
-          "gpt-5.4-xhigh",
-          "openai/gpt-5.4-high",
-          "openai/gpt-5-4-high",
-        ];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "kimi-2.6") {
-        const extraPatterns = [
-          "kimi-2.6",
-          "kimi-k2",
-          "kimi-k2.6",
-          "kimi-k2-6",
-          "moonshotai/kimi-k2.6:free",
-          "moonshotai/kimi-k2.6",
-        ];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "minimax-m3") {
-        const extraPatterns = [
-          "minimax-m3",
-          "minimax-m2",
-          "minimax-m2.1",
-          "minimax-m2.5",
-          "minimax-m2.7",
-          "minimax/minimax-m2.5:free",
-          "minimaxai/minimax-m2.7",
-        ];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "glm-5.1") {
-        const extraPatterns = ["glm-5", "glm-5.1", "z-ai/glm-5.1"];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "claude-sonnet-4-6") {
-        const extraPatterns = [
-          "claude-sonnet-4-6",
-          "claude-sonnet-4.6",
-          "claude-sonnet-4.5",
-          "claude-sonnet-4.0",
-          "claude-sonnet-4-6-thinking",
-          "claude-sonnet-4.6-thinking",
-        ];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-      if (rootId === "claude-opus-4-7") {
-        const extraPatterns = [
-          "claude-opus-4-7",
-          "claude-opus-4.7",
-          "claude-opus-4-6",
-          "claude-opus-4.6",
-          "claude-opus-4.5",
-          "claude-opus-4-5-20251101",
-          "claude-opus-4-7-thinking",
-          "claude-opus-4.7-thinking",
-          "claude-opus-4-6-thinking",
-          "claude-opus-4.6-thinking",
-        ];
-        for (const p of extraPatterns) {
-          try {
-            await createModelComboMapping({
-              pattern: p,
-              comboId: combo.id as string,
-              priority: 100,
-              enabled: true,
-              description: VIRTUAL_CATALOG_TAG,
-            });
-          } catch {}
-        }
-      }
-
-      result.created++;
       result.entries.push({
         id: comboName,
         comboId: combo.id as string,
@@ -1066,15 +611,32 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
     }
   }
 
-  // 5. Enable the setting only if we actually created entries
-  if (result.created > 0 && !settings.virtualCatalogEnabled) {
+  // 5. Remove stale generated entries only after desired state has been upserted.
+  for (const combo of virtualCombos) {
+    const comboName = typeof combo.name === "string" ? combo.name : "";
+    if (desiredComboNames.has(comboName)) continue;
+    try {
+      for (const mapping of virtualMappings.filter((item) => item.comboId === combo.id)) {
+        await deleteModelComboMapping(mapping.id);
+      }
+      await deleteCombo(combo.id as string);
+      result.deleted++;
+    } catch (err) {
+      result.errors.push(
+        `Failed to delete stale combo ${comboName}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  // 6. Enable the setting only if the desired catalog contains entries.
+  if (result.entries.length > 0 && !settings.virtualCatalogEnabled) {
     try {
       const { updateSettings } = await import("@/lib/db/settings");
       await updateSettings({ virtualCatalogEnabled: true });
     } catch {
       /* non-critical */
     }
-  } else if (result.created === 0 && result.warnings.length === 0) {
+  } else if (result.entries.length === 0 && result.warnings.length === 0) {
     result.warnings.push("No virtual catalog entries were created. The catalog was not enabled.");
   }
 
@@ -1084,6 +646,97 @@ export async function generateVirtualCatalog(): Promise<VirtualCatalogResult> {
 // ──────────────────────────────────────────────────────────
 // Query: Get current virtual catalog state
 // ──────────────────────────────────────────────────────────
+
+export async function getManualCatalogInventory(): Promise<ManualCatalogInventoryEntry[]> {
+  const [models, settings, entries] = await Promise.all([
+    collectAllProviderModels(),
+    getSettings(),
+    getVirtualCatalogEntries(),
+  ]);
+  const included = getStringSettingSet(settings, "virtualCatalogManualIncludedModels");
+  const excluded = getStringSettingSet(settings, "virtualCatalogManualExcludedModels");
+  const currentTargets = new Set(
+    entries.flatMap((entry) => entry.providers.map((p) => p.prefixedId))
+  );
+
+  return models
+    .map((model) => {
+      const exclusionReason =
+        model.type === "chat"
+          ? getTextGenerationCatalogExclusionReason({ id: model.prefixedId, root: model.rootId })
+          : "not-text-generation";
+      return {
+        id: model.prefixedId,
+        rootId: model.rootId,
+        canonicalId: getCanonicalTextGenerationModelId(model.rootId),
+        providerId: model.providerId,
+        alias: model.alias,
+        type: model.type,
+        eligible: exclusionReason === null,
+        exclusionReason,
+        inVirtualCatalog: currentTargets.has(model.prefixedId),
+        override: included.has(model.prefixedId)
+          ? ("included" as const)
+          : excluded.has(model.prefixedId)
+            ? ("excluded" as const)
+            : null,
+      };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export async function setManualCatalogMembership(
+  modelId: string,
+  included: boolean
+): Promise<VirtualCatalogResult> {
+  const inventory = await getManualCatalogInventory();
+  const model = inventory.find((entry) => entry.id === modelId);
+  if (!model) throw new Error(`Provider model not found: ${modelId}`);
+  if (included && !model.eligible) {
+    throw new Error(`Only text-generation models can be added: ${modelId}`);
+  }
+
+  const settings = await getSettings();
+  const manualIncluded = getStringSettingSet(settings, "virtualCatalogManualIncludedModels");
+  const manualExcluded = getStringSettingSet(settings, "virtualCatalogManualExcludedModels");
+  if (included) {
+    manualIncluded.add(modelId);
+    manualExcluded.delete(modelId);
+  } else {
+    manualIncluded.delete(modelId);
+    manualExcluded.add(modelId);
+  }
+
+  const { updateSettings } = await import("@/lib/db/settings");
+  await updateSettings({
+    virtualCatalogManualIncludedModels: Array.from(manualIncluded).sort(),
+    virtualCatalogManualExcludedModels: Array.from(manualExcluded).sort(),
+  });
+  return generateVirtualCatalog();
+}
+
+export async function getVirtualCatalogQuarantinedModels(): Promise<QuarantinedCatalogModel[]> {
+  const models = await collectAllProviderModels();
+  const quarantined = new Map<string, QuarantinedCatalogModel>();
+
+  for (const model of models) {
+    const reason =
+      model.type === "chat"
+        ? getTextGenerationCatalogExclusionReason({ id: model.prefixedId, root: model.rootId })
+        : "not-text-generation";
+    if (!reason) continue;
+    quarantined.set(model.prefixedId, {
+      id: model.prefixedId,
+      rootId: model.rootId,
+      providerId: model.providerId,
+      alias: model.alias,
+      type: model.type,
+      reason,
+    });
+  }
+
+  return Array.from(quarantined.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
 
 export async function getVirtualCatalogEntries(): Promise<VirtualCatalogEntry[]> {
   const existingCombos = await getCombos();
