@@ -211,7 +211,7 @@ crontab -e
 
 ### Automatic Pool Management
 
-Create a script at `scripts/auto-proxy-management.sh`:
+Create a script (see `scripts/auto-proxy-manager.sh`):
 
 ```bash
 #!/bin/bash
@@ -402,7 +402,6 @@ head proxy_scraper_data/proxies/http.txt
 
 - [monosans/proxy-scraper-checker](https://github.com/monosans/proxy-scraper-checker)
 - [OmniRoute Proxy Guide](../ops/PROXY_GUIDE.md)
-- [Free Proxy Providers Architecture](../../src/lib/freeProxyProviders/README.md)
 
 ## Support
 

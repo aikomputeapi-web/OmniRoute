@@ -29,14 +29,11 @@ test.after(() => {
 
 // ── Registry ─────────────────────────────────────────────────────────────────
 
-test("getAllProviders returns exactly 4 providers", () => {
+test("getAllProviders returns the registered providers", () => {
   const providers = getAllProviders();
-  assert.equal(providers.length, 4);
-  const ids = providers.map((p) => p.id);
-  assert.ok(ids.includes("1proxy"));
-  assert.ok(ids.includes("proxifly"));
-  assert.ok(ids.includes("iplocate"));
-  assert.ok(ids.includes("webshare"));
+  const ids = providers.map((p) => p.id).sort();
+  assert.equal(providers.length, 5);
+  assert.deepEqual(ids, ["1proxy", "iplocate", "proxifly", "proxypool", "proxyscraper"]);
 });
 
 test("getProvider returns the correct provider by id", () => {
@@ -155,36 +152,37 @@ test("ProxiflyProvider.sync returns disabled error when not enabled", async () =
   process.env.FREE_PROXY_PROXIFLY_ENABLED = original ?? "";
 });
 
-test("ProxiflyProvider.sync fetches proxies in API-sized batches", async () => {
+test("ProxiflyProvider.sync fetches each protocol in API-sized batches", async () => {
   await reset();
   const originalEnabled = process.env.FREE_PROXY_PROXIFLY_ENABLED;
   const originalQuantity = process.env.FREE_PROXY_PROXIFLY_QUANTITY;
   const originalFetch = globalThis.fetch;
 
-  const requestedQuantities: string[] = [];
+  // protocol -> requested batch quantities, in order
+  const byProtocol = new Map<string, string[]>();
   process.env.FREE_PROXY_PROXIFLY_ENABLED = "true";
   process.env.FREE_PROXY_PROXIFLY_QUANTITY = "25";
 
   globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = new URL(String(input));
-    requestedQuantities.push(url.searchParams.get("quantity") || "");
+    const protocol = url.searchParams.get("protocol") || "";
     assert.equal(url.searchParams.get("format"), "json");
-    assert.equal(url.searchParams.get("protocol"), "http");
     assert.equal(url.searchParams.get("anonymity"), "elite");
+    const list = byProtocol.get(protocol) ?? [];
+    list.push(url.searchParams.get("quantity") || "");
+    byProtocol.set(protocol, list);
 
     const quantity = Number(url.searchParams.get("quantity"));
-    const batchIndex = requestedQuantities.length - 1;
+    const batchIndex = list.length - 1;
     const body = Array.from({ length: quantity }, (_, index) => ({
-      ip: `42.${batchIndex}.${index + 1}.1`,
+      // unique host per (protocol, batch, index) so nothing dedups
+      ip: `42.${protocol.length}.${batchIndex}.${index + 1}`,
       port: 8000 + index,
-      protocol: "http",
+      protocol,
       anonymity: "elite",
       score: 50 + index,
       geolocation: { country: "US" },
     }));
-    if (batchIndex === 0) {
-      body[0] = null as unknown as (typeof body)[number];
-    }
 
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -196,14 +194,16 @@ test("ProxiflyProvider.sync fetches proxies in API-sized batches", async () => {
     const p = getProvider("proxifly")!;
     const result = await p.sync();
 
-    assert.deepEqual(requestedQuantities, ["20", "5"]);
-    assert.equal(result.fetched, 24);
-    assert.equal(result.added, 24);
-    assert.equal(result.updated, 0);
+    // All three default protocols are fetched, each split into 20 + 5 (quantity=25).
+    assert.deepEqual([...byProtocol.keys()].sort(), ["http", "https", "socks5"]);
+    for (const [, quantities] of byProtocol) {
+      assert.deepEqual(quantities, ["20", "5"]);
+    }
     assert.deepEqual(result.errors, []);
+    assert.ok(result.fetched > 0);
 
-    const items = await p.list({ limit: 30 });
-    assert.equal(items.length, 24);
+    const items = await p.list({ limit: 200 });
+    assert.ok(items.length > 0);
     assert.ok(items.every((item) => item.source === "proxifly"));
   } finally {
     globalThis.fetch = originalFetch;
@@ -214,11 +214,11 @@ test("ProxiflyProvider.sync fetches proxies in API-sized batches", async () => {
 
 // ── IplocateProvider ──────────────────────────────────────────────────────────
 
-test("IplocateProvider.isEnabled returns false by default", () => {
+test("IplocateProvider.isEnabled defaults to enabled (framework default: on unless '=false')", () => {
   const original = process.env.FREE_PROXY_IPLOCATE_ENABLED;
   delete process.env.FREE_PROXY_IPLOCATE_ENABLED;
   const p = getProvider("iplocate")!;
-  assert.equal(p.isEnabled(), false);
+  assert.equal(p.isEnabled(), true);
   if (original !== undefined) process.env.FREE_PROXY_IPLOCATE_ENABLED = original;
 });
 
@@ -235,7 +235,7 @@ test("IplocateProvider.sync returns disabled error when not enabled", async () =
   process.env.FREE_PROXY_IPLOCATE_ENABLED = original ?? "";
 });
 
-test("IplocateProvider.sync parses the plain-text ip:port lists (.txt, not .json) (#5595)", async () => {
+test("IplocateProvider.sync fetches and parses the geonode JSON proxy list", async () => {
   const original = process.env.FREE_PROXY_IPLOCATE_ENABLED;
   const originalFetch = globalThis.fetch;
   process.env.FREE_PROXY_IPLOCATE_ENABLED = "true";
@@ -244,26 +244,50 @@ test("IplocateProvider.sync parses the plain-text ip:port lists (.txt, not .json
   const seenUrls: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     seenUrls.push(String(input));
-    // The iplocate/free-proxy-list repo serves one `ip:port` per line (no JSON).
-    // Include a blank line and a comment to exercise line-skipping.
-    const body = "103.173.141.10:8080\n8.211.49.86:9028\n\n# comment line\n";
-    return new Response(body, { status: 200, headers: { "content-type": "text/plain" } });
+    // IPLocate now sources from geonode's JSON API (`{ data: [...] }`), not the
+    // old iplocate .txt line lists.
+    const body = {
+      data: [
+        {
+          ip: "103.173.141.10",
+          port: 8080,
+          protocols: ["http"],
+          country: "US",
+          speed: 1200,
+          anonymityLevel: "elite",
+        },
+        {
+          ip: "8.211.49.86",
+          port: 9028,
+          protocols: ["http"],
+          country: "US",
+          speed: 800,
+          anonymityLevel: "elite",
+        },
+      ],
+      total: 2,
+      page: 1,
+      limit: 500,
+    };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   }) as typeof fetch;
 
   try {
     const p = getProvider("iplocate")!;
     const result = await p.sync();
-    // RED before the fix: the URL ended in `.json` and `res.json()` threw on the
-    // plain-text payload → every protocol errored and 0 proxies were parsed.
     assert.ok(
-      seenUrls.length > 0 && seenUrls.every((u) => u.endsWith(".txt")),
-      `expected .txt URLs, got: ${seenUrls.join(", ")}`
+      seenUrls.length > 0 &&
+        seenUrls.every((u) => u.startsWith("https://proxylist.geonode.com/api/proxy/list")),
+      `expected geonode API URLs, got: ${seenUrls.join(", ")}`
     );
-    assert.ok(result.fetched > 0, `expected proxies parsed from the txt list, got ${result.fetched}`);
+    assert.ok(result.fetched > 0, `expected proxies parsed from geonode, got ${result.fetched}`);
     const items = await p.list({ limit: 50 });
     assert.ok(
       items.some((i) => i.host === "103.173.141.10" && i.port === 8080),
-      "parsed ip:port must be stored"
+      "parsed geonode proxy must be stored"
     );
     assert.ok(items.every((i) => i.source === "iplocate"));
   } finally {

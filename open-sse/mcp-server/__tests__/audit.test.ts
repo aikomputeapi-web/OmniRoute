@@ -1,3 +1,10 @@
+// @vitest-environment node
+//
+// This is a backend MCP-audit DB test: audit.ts dynamically imports the Node
+// built-in `node:sqlite` as a fallback driver. Under the default jsdom (client)
+// environment Vite tries to bundle that builtin and fails ("Cannot bundle
+// Node.js built-in node:sqlite"). The node environment externalizes node:*
+// builtins, so pin this file to it.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

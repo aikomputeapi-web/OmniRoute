@@ -19,7 +19,7 @@ const VISION_MODEL_SUBSTRINGS = [
 
 const VISION_MODEL_TOKENS = new Set(["bakllava", "llava", "pixtral", "qvq", "vl", "docvision"]);
 
-export function isVisionModelId(modelId: string): boolean {
+export function isVisionModelId(modelId: string | null | undefined): boolean {
   const normalized = String(modelId || "").toLowerCase();
   if (!normalized) return false;
 
